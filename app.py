@@ -695,7 +695,8 @@ def handle_rag_query(
     company_catalog_rich: list,
     company_lookup_map: dict,  # <-- ESTE É O PARÂMETRO QUE FALTAVA
     summary_data: dict,
-    filters: dict
+    filters: dict,
+    prioritize_recency: bool = True
 ) -> tuple[str, list[dict]]:
     """
     Orquestra o pipeline de RAG para perguntas qualitativas, incluindo a geração do plano,
