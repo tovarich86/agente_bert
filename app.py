@@ -591,6 +591,7 @@ def create_dynamic_analysis_plan(query, company_catalog_rich, kb, summary_data, 
 
     # --- PASSO 4: Extração de Tópicos Hierárquicos (Se Nenhuma Intenção Especial Foi Ativada) ---
     alias_map = create_hierarchical_alias_map(kb)
+    print("DEBUG: Alias Map Gerado:", json.dumps(alias_map, indent=2, ensure_ascii=False))
     found_topics = set()
     
     # Ordena os aliases por comprimento para encontrar o mais específico primeiro
