@@ -25,6 +25,8 @@ import streamlit as st
 import requests
 import logging
 import random
+from datetime import datetime
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +149,49 @@ def _create_company_lookup_map(company_catalog_rich: list) -> dict:
             lookup_map[name.lower()] = canonical_name
             
     return lookup_map
+
+def rerank_by_recency(search_results, chunk_map, decay_factor=0.95):
+    """
+    Re-ranqueia os resultados da busca, dando um bônus para documentos mais recentes.
+    Um decay_factor de 0.95 significa que cada ano de idade do documento mantém 95% do seu "bônus".
+    
+    Args:
+        search_results (list): Lista de tuplas (score, chunk_id) da busca FAISS.
+        chunk_map (list): O mapa de chunks completo.
+        decay_factor (float): Fator de decaimento anual.
+        
+    Returns:
+        list: A mesma lista de entrada, mas reordenada.
+    """
+    if not search_results:
+        return []
+
+    current_year = datetime.now().year
+    reranked_results = []
+
+    for score, chunk_id in search_results:
+        metadata = chunk_map[chunk_id]
+        new_score = score
+        
+        try:
+            doc_date_str = metadata.get("document_date")
+            if doc_date_str and doc_date_str != "N/A":
+                # Extrai o ano da data no formato 'AAAA-MM-DD'
+                doc_year = int(doc_date_str.split('-')[0])
+                age = max(0, current_year - doc_year)
+                
+                # A distância L2 do FAISS é "menor é melhor".
+                # Multiplicamos por um fator < 1 para diminuir a distância (melhorar o score) de itens recentes.
+                recency_boost = decay_factor ** age
+                new_score = score * recency_boost
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Não foi possível processar a data para o chunk {chunk_id}: {doc_date_str} - {e}")
+            pass # Mantém o score original se a data for inválida
+
+        reranked_results.append((new_score, chunk_id))
+
+    # Reordena a lista final pelo novo score (menor é melhor)
+    return sorted(reranked_results, key=lambda x: x[0])
 
 def get_final_unified_answer(query: str, context: str) -> str:
     """Chama a API do LLM para gerar uma resposta final sintetizada."""
