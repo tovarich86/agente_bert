@@ -321,16 +321,23 @@ def execute_dynamic_plan(
             candidate_chunks_dict[chunk_hash] = chunk_info
 
     # --- ESTÁGIO 1: PRÉ-FILTRAGEM GLOBAL ---
-    pre_filtered_chunks = []
-    for artifact_name, artifact_data in artifacts.items():
-        chunk_map = artifact_data.get('chunks', {}).get('map', [])
-        all_text_chunks = artifact_data.get('chunks', {}).get('chunks', [])
-        if not chunk_map or not all_text_chunks or len(chunk_map) != len(all_text_chunks): continue
-        for i, chunk_meta in enumerate(chunk_map):
-            # Enriquece o metadado com o texto e o tipo de documento
-            chunk_meta['text'] = all_text_chunks[i]
-            chunk_meta['doc_type'] = artifact_name
-            pre_filtered_chunks.append(chunk_meta)
+        pre_filtered_chunks = []
+        for artifact_name, artifact_data in artifacts.items():
+            # Acessa diretamente a lista, que é a estrutura correta agora.
+            list_of_chunks = artifact_data.get('chunks', [])
+
+            if not isinstance(list_of_chunks, list):
+                logger.warning(f"Formato inesperado para chunks em '{artifact_name}'. Esperava uma lista.")
+                continue
+
+            for chunk_meta in list_of_chunks:
+                # Garante a compatibilidade renomeando 'chunk_text' para 'text'.
+                if 'chunk_text' in chunk_meta and 'text' not in chunk_meta:
+                    chunk_meta['text'] = chunk_meta.pop('chunk_text')
+
+            # Adiciona o tipo de documento.
+                chunk_meta['doc_type'] = artifact_name
+                pre_filtered_chunks.append(chunk_meta)
     
     if filtros.get('setor'):
         pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
