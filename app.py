@@ -284,43 +284,47 @@ def execute_dynamic_plan(
     # Funções auxiliares como dependências explícitas
     search_by_tags: callable,
     expand_search_terms: callable,
-    prioritize_recency: bool = True
+    prioritize_recency: bool = True,
 ) -> tuple[str, list[dict]]:
     """
     Versão 4.0 (Definitiva e Completa) do Executor de Planos.
-
-    Esta função implementa uma pipeline de 3 estágios sem omissões ou simplificações:
-    1. PRÉ-FILTRA chunks por metadados (setor, controle) para eficiência.
-    2. ROTEIA a execução com base no tipo de plano, usando a lógica completa da versão original.
-    3. EXECUTA buscas híbridas (tags + vetorial) no conjunto de dados pré-filtrado.
-    4. RE-RANQUEIA os resultados finais para máxima precisão.
     """
     logger.info(f"Executando plano v4.0 (Definitivo) para query: '{query}'")
-    # --- PONTO DE DEBUG 2: VERIFICAR O CARREGAMENTO E FILTRAGEM DE CHUNKS ---
+    
+    # --- PONTO DE DEBUG SEGURO ---
     debug_info = {}
-    all_chunks_before_filter = []
+    
+    # Passo 1: Coletar todos os chunks em uma única lista.
+    all_chunks = []
     for artifact_name, artifact_data in artifacts.items():
-        # Lógica de carregamento que você já corrigiu
         list_of_chunks = artifact_data.get('chunks', [])
         if isinstance(list_of_chunks, list):
-            all_chunks_before_filter.extend(list_of_chunks)
-    
-    debug_info["Total de Chunks Carregados (Antes de qualquer filtro)"] = len(all_chunks_before_filter)
-    
-    # Lógica de filtragem que você já tem
-    filtered_chunks = all_chunks_before_filter
+            # Adiciona o tipo de documento a cada chunk
+            for chunk in list_of_chunks:
+                chunk['doc_type'] = artifact_name
+            all_chunks.extend(list_of_chunks)
+
+    debug_info["Total de Chunks Carregados (Antes dos filtros)"] = len(all_chunks)
+
+    # Passo 2: Aplicar filtros.
+    filtros = plan.get("filtros", {}) # Acessa os filtros do plano
+    pre_filtered_chunks = all_chunks
     if filtros.get('setor'):
-        filtered_chunks = [c for c in filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
-    debug_info["Chunks Restantes (Após filtro de Setor)"] = len(filtered_chunks)
+        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
+    debug_info["Chunks Restantes (Após filtro de Setor)"] = len(pre_filtered_chunks)
 
     if filtros.get('controle_acionario'):
-        filtered_chunks = [c for c in filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
-    debug_info["Chunks Restantes (Após filtro de Controle)"] = len(filtered_chunks)
+        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
+    debug_info["Chunks Restantes (Após filtro de Controle)"] = len(pre_filtered_chunks)
 
     with st.expander("🕵️ DEBUG: Rastreamento do Carregamento de Documentos (Chunks)"):
         st.json(debug_info)
+    # --- FIM DO DEBUG ---
+
+    logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
 
     # --- ESTÁGIO 0: CONFIGURAÇÃO E FUNÇÕES AUXILIARES ---
+     
     candidate_chunks_dict = {}
     TOP_K_INITIAL_RETRIEVAL = 30
     TOP_K_FINAL = 10
