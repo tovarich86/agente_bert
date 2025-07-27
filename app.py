@@ -16,6 +16,7 @@ import zipfile
 import io
 import shutil
 import random
+from datetime import datetime
 from models import get_embedding_model, get_cross_encoder_model
 from concurrent.futures import ThreadPoolExecutor # <<< MELHORIA 4 ADICIONADA
 from tools import (
