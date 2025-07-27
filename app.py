@@ -36,7 +36,7 @@ from analytical_engine import AnalyticalEngine
 # --- Configurações Gerais ---
 st.set_page_config(page_title="Agente de Análise LTIP", page_icon="🔍", layout="wide", initial_sidebar_state="expanded")
 
-MODEL_NAME = 'sentence-transformers/neuralmind/bert-base-portuguese-cased'
+MODEL_NAME = 'neuralmind/bert-base-portuguese-cased'
 TOP_K_SEARCH = 7
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.0-flash-lite"
