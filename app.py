@@ -1139,7 +1139,7 @@ def main():
                         else:
                             display_doc_type = doc_type_raw.replace('_', ' ')
             
-                        display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)""
+                        display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)"
             
                         # A lógica de exibição agora está corretamente separada por tipo de documento
                         if "frmExibirArquivoIPEExterno" in url:
