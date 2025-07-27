@@ -5,7 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2'
+MODEL_NAME = 'neuralmind/bert-base-portuguese-cased'
 CROSS_ENCODER_MODEL_NAME = 'cross-encoder/ms-marco-MiniLM-L-6-v2'
 
 @st.cache_resource(show_spinner="Carregando modelo de embedding...")
