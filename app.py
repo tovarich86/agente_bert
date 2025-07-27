@@ -283,7 +283,6 @@ def execute_dynamic_plan(
     # Funções auxiliares como dependências explícitas
     search_by_tags: callable,
     expand_search_terms: callable,
-    year_filter: int = 0,          # <-- NOVO PARÂMETRO
     prioritize_recency: bool = True
 ) -> tuple[str, list[dict]]:
     """
@@ -336,8 +335,6 @@ def execute_dynamic_plan(
         pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
     if filtros.get('controle_acionario'):
         pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
-    if year_filter > 0:
-        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get("document_date", "").startswith(str(year_filter))]
 
     logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
 
@@ -800,7 +797,7 @@ def handle_rag_query(
     else:
         with st.status("2️⃣ Recuperando e re-ranqueando contexto...", expanded=True) as status:
             context, all_sources_structured = execute_dynamic_plan(
-                query, plan, artifacts, embedding_model, cross_encoder_model, kb,company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms, year_filter=year_filter,prioritize_recency=prioritize_recency)
+                query, plan, artifacts, embedding_model, cross_encoder_model, kb,company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms,prioritize_recency=prioritize_recency)
             
             if not context:
                 st.error("❌ Não encontrei informações relevantes nos documentos para a sua consulta.")
@@ -862,30 +859,6 @@ def main():
             options=controles_disponiveis, # Usa a lista dinâmica
             index=0
         )
-        st.markdown("---") 
-        st.header("⚙️ Opções de Busca Avançada")
-        st.caption("Refine sua busca qualitativa com filtros temporais.")
-
-        # Widget para filtrar por um ano específico
-        year_filter = st.number_input(
-        "Filtrar por ano de referência (0 para desativar)", 
-        min_value=0, 
-        max_value=datetime.now().year, 
-        value=0, # Começa desativado por padrão
-        step=1,
-        help="Filtra a busca RAG para incluir apenas documentos do ano selecionado. Deixe em 0 para buscar em todos os anos."
-        )
-        start_date_para_filtro = None
-        end_date_para_filtro = None
-
-        # A condição que resolve o problema:
-        if year_filter > 0:
-            start_date_para_filtro = f"{year_filter}-01-01"
-            end_date_para_filtro = f"{year_filter}-12-31"
-
-
-
-
      
 
 
@@ -1056,8 +1029,7 @@ def main():
                             artifacts=artifacts, 
                             model=embedding_model, 
                             kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                            filters=active_filters,
-                            year_filter=year_filter
+                            filters=active_filters                            
                         )
                         all_found_companies.update(companies)
 
