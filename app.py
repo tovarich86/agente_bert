@@ -449,64 +449,61 @@ def execute_dynamic_plan(
                         if idx != -1: add_candidate(pre_filtered_chunks[idx])
 
         # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
-        elif empresas and topicos:
-            logger.info(f"ROTA Default (Híbrida): Executando busca para Empresas: {empresas} e Tópicos: {topicos}")
-            for empresa_canonica in empresas:
-                # Filtra os chunks para a empresa atual
-                chunks_for_company = [c for c in pre_filtered_chunks if _is_company_match(empresa_canonica, c.get('company_name', ''))]
-                if not chunks_for_company: continue
-                                # --- INÍCIO DA LÓGICA DE DEDUPLICAÇÃO INTELIGENTE ---
-                
-                # 1. Agrupa os chunks por documento de origem (source_url)
-                docs_by_url = defaultdict(list)
-                for chunk in chunks_for_company:
-                    docs_by_url[chunk.get('source_url')].append(chunk)
+        # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
+      elif empresas and topicos:
+          logger.info(f"ROTA Default (Híbrida): Executando busca para Empresas: {empresas} e Tópicos: {topicos}")
 
-                # 2. Se houver muitos documentos, seleciona os mais recentes
-                MAX_DOCS_PER_COMPANY = 3  # Analisa no máximo os 3 documentos mais recentes
-                if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
-                    
-                    # Tenta ordenar pela data ou protocolo na URL (mais novo primeiro)
-                    def get_sort_key(url):
-                        match = re.search(r'(?:NumeroProtocoloEntrega=|rada-cvm/|/id/)\d{4,}(\d+)', str(url))
-                        return int(match.group(1)) if match else 0
+          # --- CORREÇÃO FUNDAMENTAL: FILTRAR CHUNKS POR EMPRESA PRIMEIRO ---
+          # Cria um subconjunto de chunks contendo APENAS as empresas solicitadas no plano.
+          strictly_filtered_chunks = []
+          for empresa_canonica in empresas:
+              chunks_for_this_company = [
+                  c for c in pre_filtered_chunks if _is_company_match(empresa_canonica, c.get('company_name', ''))
+              ]
+              
+              # Lógica de deduplicação/recência (bom para manter a qualidade)
+              docs_by_url = defaultdict(list)
+              for chunk in chunks_for_this_company:
+                  docs_by_url[chunk.get('source_url')].append(chunk)
 
-                    sorted_urls = sorted(docs_by_url.keys(), key=get_sort_key, reverse=True)
-                    
-                    # Seleciona as URLs dos documentos mais recentes
-                    latest_urls = sorted_urls[:MAX_DOCS_PER_COMPANY]
-                    
-                    # Remonta a lista de chunks usando apenas os documentos mais recentes
-                    final_chunks_for_company = []
-                    for url in latest_urls:
-                        final_chunks_for_company.extend(docs_by_url[url])
-                    
-                    logger.info(
-                        f"Para '{empresa_canonica}', reduzindo {len(chunks_for_company)} chunks de {len(docs_by_url)} documentos "
-                        f"para {len(final_chunks_for_company)} chunks dos {MAX_DOCS_PER_COMPANY} documentos mais recentes."
-                    )
-                    chunks_for_company = final_chunks_for_company
+              MAX_DOCS_PER_COMPANY = 3 # Limita a 3 documentos por empresa
+              if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
+                  def get_sort_key(url):
+                      match = re.search(r'(?:NumeroProtocoloEntrega=|rada-cvm/|/id/)\d{4,}(\d+)', str(url))
+                      return int(match.group(1)) if match else 0
+                  sorted_urls = sorted(docs_by_url.keys(), key=get_sort_key, reverse=True)
+                  latest_urls = sorted_urls[:MAX_DOCS_PER_COMPANY]
+                  
+                  for url in latest_urls:
+                      strictly_filtered_chunks.extend(docs_by_url[url])
+              else:
+                  strictly_filtered_chunks.extend(chunks_for_this_company)
 
-                # Parte 1: Busca por Tags (Alta Precisão)
-                target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
-                # A função search_by_tags é adaptada para buscar na lista de chunks em memória
-                tagged_chunks = search_by_tags(chunks_for_company, list(target_tags))
-                for chunk_info in tagged_chunks:
-                    add_candidate(chunk_info)
-                
-                # Parte 2: Busca Vetorial (Alta Revocação Semântica)
-                temp_embeddings = model.encode([c['text'] for c in chunks_for_company], normalize_embeddings=True).astype('float32')
-                temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
-                temp_index.add(temp_embeddings)
-                
-                search_name = next((e.get("search_alias", empresa_canonica) for e in company_catalog_rich if e.get("canonical_name") == empresa_canonica), empresa_canonica)
-                
-                for topico in topicos:
-                    search_query = f"informações detalhadas sobre {topico} no plano da empresa {search_name}"
-                    query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
-                    _, indices = temp_index.search(query_embedding, min(TOP_K_INITIAL_RETRIEVAL, len(chunks_for_company)))
-                    for idx in indices[0]:
-                        if idx != -1: add_candidate(chunks_for_company[idx])
+          logger.info(f"Busca focada em {len(strictly_filtered_chunks)} chunks das {len(empresas)} empresas solicitadas.")
+          
+          if not strictly_filtered_chunks:
+              logger.warning(f"Nenhum chunk encontrado para as empresas {empresas} após a filtragem.")
+          else:
+              # Parte 1: Busca por Tags (na lista já filtrada)
+              target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
+              tagged_chunks = search_by_tags(strictly_filtered_chunks, list(target_tags))
+              for chunk_info in tagged_chunks:
+                  add_candidate(chunk_info)
+              
+              # Parte 2: Busca Vetorial (no conjunto minúsculo e estritamente filtrado)
+              temp_embeddings = model.encode([c['text'] for c in strictly_filtered_chunks], normalize_embeddings=True, batch_size=32).astype('float32')
+              temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
+              temp_index.add(temp_embeddings)
+              
+              for empresa_canonica in empresas:
+                  search_name = next((e.get("search_alias", empresa_canonica) for e in company_catalog_rich if e.get("canonical_name") == empresa_canonica), empresa_canonica)
+                  for topico in topicos:
+                      search_query = f"informações detalhadas sobre {topico} no plano da empresa {search_name}"
+                      query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
+                      _, indices = temp_index.search(query_embedding, min(TOP_K_INITIAL_RETRIEVAL, len(strictly_filtered_chunks)))
+                      for idx in indices[0]:
+                          if idx != -1:
+                              add_candidate(strictly_filtered_chunks[idx])
 
    
 
