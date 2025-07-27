@@ -477,12 +477,7 @@ def execute_dynamic_plan(
                     for idx in indices[0]:
                         if idx != -1: add_candidate(chunks_for_company[idx])
 
-    if prioritize_recency and vector_results:
-        logger.info("Aplicando re-ranking por data...")
-        # A função de re-ranking agora opera nos resultados do índice temporário
-        # e usa o id_to_chunk_map para obter os metadados.
-        temp_chunk_map = list(id_to_chunk_map.values())
-        vector_results = rerank_by_recency(vector_results, temp_chunk_map)
+   
 
     # --- ESTÁGIO 3: RE-RANKING FINAL ---
     if not candidate_chunks_dict:
