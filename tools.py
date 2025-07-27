@@ -87,63 +87,36 @@ QUESTION_TEMPLATES = {
 def create_hierarchical_alias_map(kb: dict) -> dict:
     """
     Cria um mapeamento plano de qualquer alias (em minúsculas) para seu
-    caminho hierárquico completo. Esta versão é garantida para navegar
-    corretamente na estrutura aninhada do DICIONARIO_UNIFICADO_HIERARQUICO.
+    caminho hierárquico completo. Esta versão navega corretamente
+    na estrutura aninhada do DICIONARIO_UNIFICADO_HIERARQUICO.
     """
     alias_map = {}
 
     def _recursive_builder(sub_dict, path_so_far):
         """Função auxiliar recursiva que percorre os nós do dicionário."""
-        # Itera sobre cada tópico no nível atual (ex: 'AcoesRestritas', 'OpcoesDeCompra')
+        # Itera sobre cada tópico no nível atual (ex: 'AcoesRestritas')
         for topic_key, topic_data in sub_dict.items():
-            # Constrói o caminho completo até este tópico (ex: ['TiposDePlano', 'AcoesRestritas'])
             current_path = path_so_far + [topic_key]
             path_str = ",".join(current_path)
 
-            # 1. Adiciona todos os aliases definidos no JSON para este tópico
+            # 1. Adiciona todos os aliases definidos no JSON
             for alias in topic_data.get("aliases", []):
                 alias_map[alias.lower()] = path_str
             
-            # 2. Adiciona o nome da própria chave como um alias (ex: 'AcoesRestritas' -> 'acoes restritas')
+            # 2. Adiciona o nome da própria chave como um alias
             canonical_alias = topic_key.replace('_', ' ').lower()
             if canonical_alias not in alias_map:
                 alias_map[canonical_alias] = path_str
 
-            # 3. Se houver um dicionário de 'subtopicos', chama a si mesma para continuar descendo
+            # 3. Se houver 'subtopicos', continua a recursão
             if "subtopicos" in topic_data and isinstance(topic_data.get("subtopicos"), dict):
                 _recursive_builder(topic_data["subtopicos"], current_path)
 
-    # O ponto de entrada: itera sobre as seções principais do dicionário (ex: "TiposDePlano", "GovernancaRisco")
+    # Itera sobre as seções principais do dicionário (ex: "TiposDePlano")
     for section_key, section_data in kb.items():
-        # A primeira chamada começa com o nome da seção (ex: ['TiposDePlano'])
+        # A primeira chamada começa com o nome da seção
         _recursive_builder(section_data, [section_key])
         
-    return alias_map
-def create_hierarchical_alias_map(kb: dict) -> dict:
-    """
-    Cria um mapeamento plano de qualquer alias (em minúsculas) para seu
-    caminho hierárquico completo.
-    AGORA SUPORTA ALIASES NA CATEGORIA PAI.
-    """
-    alias_map = {}
-    for section, data in kb.items():  # Ex: section="MecanicasCicloDeVida"
-        path_str = section
-        
-        # --- LÓGICA ADICIONADA ---
-        # 1. Mapeia os aliases da categoria principal (ex: "mecanicas")
-        for alias in data.get("aliases", []):
-            alias_map[alias.lower()] = path_str
-        
-        # 2. Mapeia o nome canônico da própria categoria
-        canonical_alias = section.replace('_', ' ').lower()
-        if canonical_alias not in alias_map:
-            alias_map[canonical_alias] = path_str
-        # --- FIM DA LÓGICA ADICIONADA ---
-
-        # 3. Continua a recursão para os sub-tópicos, se existirem
-        if "subtopicos" in data:
-            _recursive_alias_mapper(data["subtopicos"], [section], alias_map)
-            
     return alias_map
 
 def _create_company_lookup_map(company_catalog_rich: list) -> dict:
