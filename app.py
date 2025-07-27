@@ -48,7 +48,7 @@ FILES_TO_DOWNLOAD = {
     "item_8_4_faiss_index_final.bin": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/item_8_4_faiss_.bin",
     "outros_documentos_chunks_map_final.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/outros_documentos_chunks_map_.json",
     "outros_documentos_faiss_index_final.bin": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/outros_documentos_faiss_.bin",
-    "resumo_fatos_e_topicos_final_enriquecido.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/resumo_fatos_e_topicos_v4_por_data.json"
+    "resumo_fatos_e_topicos_final_enriquecido.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/resumo_fatos_e_topicos_final_enriquecido.json"
 }
 CACHE_DIR = Path("data_cache")
 SUMMARY_FILENAME = "resumo_fatos_e_topicos_final_enriquecido.json"
