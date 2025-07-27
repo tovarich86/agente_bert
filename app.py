@@ -875,6 +875,25 @@ def main():
         step=1,
         help="Filtra a busca RAG para incluir apenas documentos do ano selecionado. Deixe em 0 para buscar em todos os anos."
         )
+        start_date_para_filtro = None
+        end_date_para_filtro = None
+
+        # A condição que resolve o problema:
+        if year_filter > 0:
+            start_date_para_filtro = f"{year_filter}-01-01"
+            end_date_para_filtro = f"{year_filter}-12-31"
+
+        analysis_result, df = artifacts['analytical_engine'].list_companies_by_topic(
+        topic=seu_topico,
+        setor=seu_filtro_de_setor,
+        controle=seu_filtro_de_controle,
+        start_date=start_date_para_filtro, # Passa None se o filtro estiver desativado
+        end_date=end_date_para_filtro   # Passa None se o filtro estiver desativado
+        )
+
+
+     
+
 
         # Checkbox para ativar/desativar o re-ranking por recência
         prioritize_recency = st.checkbox(
