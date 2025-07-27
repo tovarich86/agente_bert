@@ -329,7 +329,7 @@ def find_companies_by_topic(
 
     # Itera sobre os artefatos (ex: 'item_8_4', 'outros_documentos')
     for artifact_name, artifact_data in artifacts.items():
-        chunk_map = artifact_data.get('chunks', {}).get('map', [])
+        chunk_map = artifact_data.get('chunks', [])
         index = artifact_data.get('index')
         if not chunk_map or not index:
             continue
