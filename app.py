@@ -321,38 +321,32 @@ def execute_dynamic_plan(
             candidate_chunks_dict[chunk_hash] = chunk_info
 
     # --- ESTÁGIO 1: PRÉ-FILTRAGEM GLOBAL ---
-        pre_filtered_chunks = []
+        all_chunks = []
         for artifact_name, artifact_data in artifacts.items():
-        # Acessa diretamente a lista de chunks, que é a estrutura correta agora.
             list_of_chunks = artifact_data.get('chunks', [])
 
-        # Adiciona uma verificação para garantir que os dados são uma lista.
             if not isinstance(list_of_chunks, list):
                 logger.warning(f"Formato inesperado para chunks em '{artifact_name}'. Esperava uma lista.")
                 continue
 
             for chunk_meta in list_of_chunks:
-                # Garante que a chave de texto seja 'text', para compatibilidade com o resto do script.
-                # Se a chave for 'chunk_text', ela é renomeada.
+                # Renomeia a chave de texto para garantir a compatibilidade.
                 if 'chunk_text' in chunk_meta and 'text' not in chunk_meta:
                     chunk_meta['text'] = chunk_meta.pop('chunk_text')
             
-            # Adiciona o tipo de documento para saber a origem.
                 chunk_meta['doc_type'] = artifact_name
-                pre_filtered_chunks.append(chunk_meta)
-    
-    filtered_results = pre_filtered_chunks
+                all_chunks.append(chunk_meta)
 
-    if filtros.get('setor'):
-        filtered_results = [c for c in filtered_results if c.get('setor', '').lower() == filtros['setor'].lower()]
+        # Passo 2: Aplicar filtros sobre a lista já populada.
+        # Esta abordagem sequencial elimina o UnboundLocalError.
+        pre_filtered_chunks = all_chunks
+        if filtros.get('setor'):
+            pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
 
-    if filtros.get('controle_acionario'):
-        filtered_results = [c for c in filtered_results if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
+        if filtros.get('controle_acionario'):
+            pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
 
-    # Atualiza a variável original com a lista já filtrada
-    pre_filtered_chunks = filtered_results
-
-    logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
+        logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
 
     # --- ESTÁGIO 2: ROTEAMENTO E BUSCA HÍBRIDA DETALHADA ---
     
