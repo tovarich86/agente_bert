@@ -106,7 +106,7 @@ def setup_and_load_data():
     controles = set()
 
     for artifact_data in artifacts.values():
-        chunk_map = artifact_data.get('chunks', {}).get('map', [])
+        chunk_map = artifact_data.get('chunks', [])
         for metadata in chunk_map:
             # Pega o valor do setor e trata se for nulo ou vazio
             setor = metadata.get('setor')
