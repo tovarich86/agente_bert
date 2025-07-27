@@ -883,13 +883,7 @@ def main():
             start_date_para_filtro = f"{year_filter}-01-01"
             end_date_para_filtro = f"{year_filter}-12-31"
 
-        analysis_result, df = artifacts['analytical_engine'].list_companies_by_topic(
-        topic=seu_topico,
-        setor=seu_filtro_de_setor,
-        controle=seu_filtro_de_controle,
-        start_date=start_date_para_filtro, # Passa None se o filtro estiver desativado
-        end_date=end_date_para_filtro   # Passa None se o filtro estiver desativado
-        )
+
 
 
      
