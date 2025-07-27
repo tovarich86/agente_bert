@@ -1104,7 +1104,6 @@ def main():
                 company_lookup_map=st.session_state.company_lookup_map, 
                 summary_data=summary_data,
                 filters=active_filters,
-                year_filter=year_filter,
                 prioritize_recency=prioritize_recency
             )
             st.markdown(final_answer)
