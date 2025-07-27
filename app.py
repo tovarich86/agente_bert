@@ -281,7 +281,9 @@ def execute_dynamic_plan(
     company_lookup_map: dict,
     # Funções auxiliares como dependências explícitas
     search_by_tags: callable,
-    expand_search_terms: callable
+    expand_search_terms: callable,
+    year_filter: int = 0,          # <-- NOVO PARÂMETRO
+    prioritize_recency: bool = True
 ) -> tuple[str, list[dict]]:
     """
     Versão 4.0 (Definitiva e Completa) do Executor de Planos.
@@ -333,6 +335,8 @@ def execute_dynamic_plan(
         pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
     if filtros.get('controle_acionario'):
         pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
+    if year_filter > 0:
+        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get("document_date", "").startswith(str(year_filter))]
 
     logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
 
@@ -464,6 +468,13 @@ def execute_dynamic_plan(
                     _, indices = temp_index.search(query_embedding, min(TOP_K_INITIAL_RETRIEVAL, len(chunks_for_company)))
                     for idx in indices[0]:
                         if idx != -1: add_candidate(chunks_for_company[idx])
+
+    if prioritize_recency and vector_results:
+        logger.info("Aplicando re-ranking por data...")
+        # A função de re-ranking agora opera nos resultados do índice temporário
+        # e usa o id_to_chunk_map para obter os metadados.
+        temp_chunk_map = list(id_to_chunk_map.values())
+        vector_results = rerank_by_recency(vector_results, temp_chunk_map)
 
     # --- ESTÁGIO 3: RE-RANKING FINAL ---
     if not candidate_chunks_dict:
