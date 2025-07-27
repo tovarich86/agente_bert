@@ -299,8 +299,12 @@ def execute_dynamic_plan(
     for artifact_name, artifact_data in artifacts.items():
         list_of_chunks = artifact_data.get('chunks', [])
         if isinstance(list_of_chunks, list):
-            # Adiciona o tipo de documento a cada chunk
             for chunk in list_of_chunks:
+                # --- ADICIONE ESTA LINHA ---
+                # Renomeia 'chunk_text' para 'text' para compatibilidade.
+                if 'chunk_text' in chunk:
+                    chunk['text'] = chunk.pop('chunk_text')
+                # -------------------------
                 chunk['doc_type'] = artifact_name
             all_chunks.extend(list_of_chunks)
 
