@@ -36,18 +36,18 @@ from analytical_engine import AnalyticalEngine
 # --- Configurações Gerais ---
 st.set_page_config(page_title="Agente de Análise LTIP", page_icon="🔍", layout="wide", initial_sidebar_state="expanded")
 
-MODEL_NAME = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2'
+MODEL_NAME = 'sentence-transformers/neuralmind/bert-base-portuguese-cased'
 TOP_K_SEARCH = 7
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.0-flash-lite"
 CVM_SEARCH_URL = "https://www.rad.cvm.gov.br/ENET/frmConsultaExternaCVM.aspx"
 
 FILES_TO_DOWNLOAD = {
-    "item_8_4_chunks_map_final.json": "https://github.com/tovarich86/agentev3/releases/download/V2.0-DATA/item_8_4_chunks_map_final.json",
-    "item_8_4_faiss_index_final.bin": "https://github.com/tovarich86/agentev3/releases/download/V2.0-DATA/item_8_4_faiss_index_final.bin",
-    "outros_documentos_chunks_map_final.json": "https://github.com/tovarich86/agentev3/releases/download/V2.0-DATA/outros_documentos_chunks_map_final.json",
-    "outros_documentos_faiss_index_final.bin": "https://github.com/tovarich86/agentev3/releases/download/V2.0-DATA/outros_documentos_faiss_index_final.bin",
-    "resumo_fatos_e_topicos_final_enriquecido.json": "https://github.com/tovarich86/agentev3/releases/download/V2.0-DATA/resumo_fatos_e_topicos_final_enriquecido.json"
+    "item_8_4_chunks_map_final.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/item_8_4_chunks_map_.json",
+    "item_8_4_faiss_index_final.bin": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/item_8_4_faiss_.bin",
+    "outros_documentos_chunks_map_final.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/outros_documentos_chunks_map_.json",
+    "outros_documentos_faiss_index_final.bin": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/outros_documentos_faiss_.bin",
+    "resumo_fatos_e_topicos_final_enriquecido.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/resumo_fatos_e_topicos_v4_por_data.json"
 }
 CACHE_DIR = Path("data_cache")
 SUMMARY_FILENAME = "resumo_fatos_e_topicos_final_enriquecido.json"
