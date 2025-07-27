@@ -1050,7 +1050,7 @@ def main():
                     companies_from_filter = set()
                     # Itera em todos os documentos para encontrar empresas que correspondem ao filtro
                     for artifact_data in artifacts.values():
-                        chunk_map = artifact_data.get('chunks', {}).get('map', [])
+                        chunk_map = artifact_data.get('chunks', [])
                         for metadata in chunk_map:
                             # --- INÍCIO DA CORREÇÃO ---
                             setor_metadata = metadata.get('setor', '')
