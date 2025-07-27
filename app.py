@@ -323,19 +323,21 @@ def execute_dynamic_plan(
     # --- ESTÁGIO 1: PRÉ-FILTRAGEM GLOBAL ---
         pre_filtered_chunks = []
         for artifact_name, artifact_data in artifacts.items():
-            # Acessa diretamente a lista, que é a estrutura correta agora.
+        # Acessa diretamente a lista de chunks, que é a estrutura correta agora.
             list_of_chunks = artifact_data.get('chunks', [])
 
+        # Adiciona uma verificação para garantir que os dados são uma lista.
             if not isinstance(list_of_chunks, list):
                 logger.warning(f"Formato inesperado para chunks em '{artifact_name}'. Esperava uma lista.")
                 continue
 
             for chunk_meta in list_of_chunks:
-                # Garante a compatibilidade renomeando 'chunk_text' para 'text'.
+                # Garante que a chave de texto seja 'text', para compatibilidade com o resto do script.
+                # Se a chave for 'chunk_text', ela é renomeada.
                 if 'chunk_text' in chunk_meta and 'text' not in chunk_meta:
                     chunk_meta['text'] = chunk_meta.pop('chunk_text')
-
-            # Adiciona o tipo de documento.
+            
+            # Adiciona o tipo de documento para saber a origem.
                 chunk_meta['doc_type'] = artifact_name
                 pre_filtered_chunks.append(chunk_meta)
     
@@ -1065,8 +1067,13 @@ def main():
                     companies_from_filter = set()
                     # Itera em todos os documentos para encontrar empresas que correspondem ao filtro
                     for artifact_data in artifacts.values():
-                        chunk_map = artifact_data.get('chunks', [])
-                        for metadata in chunk_map:
+        # Acessa diretamente a lista de chunks, que contém os metadados.
+                        list_of_chunks = artifact_data.get('chunks', [])
+
+                        if not isinstance(list_of_chunks, list):
+                            continue
+
+                        for metadata in list_of_chunks:
                             # --- INÍCIO DA CORREÇÃO ---
                             setor_metadata = metadata.get('setor', '')
                             controle_metadata = metadata.get('controle_acionario', '')
