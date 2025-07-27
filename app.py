@@ -339,10 +339,16 @@ def execute_dynamic_plan(
                 chunk_meta['doc_type'] = artifact_name
                 pre_filtered_chunks.append(chunk_meta)
     
+    filtered_results = pre_filtered_chunks
+
     if filtros.get('setor'):
-        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
+        filtered_results = [c for c in filtered_results if c.get('setor', '').lower() == filtros['setor'].lower()]
+
     if filtros.get('controle_acionario'):
-        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
+        filtered_results = [c for c in filtered_results if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
+
+    # Atualiza a variável original com a lista já filtrada
+    pre_filtered_chunks = filtered_results
 
     logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
 
