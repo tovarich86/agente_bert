@@ -308,7 +308,6 @@ def find_companies_by_topic(
     model: SentenceTransformer,
     kb: dict,
     filters: dict = None,
-    year_filter: int = 0, # <-- Novo parâmetro integrado
     top_k: int = 20
 ) -> list[str]:
     """
@@ -319,7 +318,7 @@ def find_companies_by_topic(
     """
     alias_map = create_hierarchical_alias_map(kb)
     topic_path = alias_map.get(topic.lower(), topic)
-    logger.info(f"Buscando empresas para '{topic}' (caminho: {topic_path}) com filtros: {filters} e ano: {year_filter}")
+    logger.info(f"Buscando empresas para '{topic}' (caminho: {topic_path}) com filtros: {filters}")
 
     companies_from_metadata = set()
     companies_from_vector = set()
@@ -341,10 +340,10 @@ def find_companies_by_topic(
             setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
             # Valida filtro de controle
             controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
-            # Valida filtro de ano
-            year_match = not year_filter or chunk_data.get("document_date", "").startswith(str(year_filter))
+            
+            
 
-            if setor_match and controle_match and year_match:
+            if setor_match and controle_match:
                 candidate_chunks_with_indices.append((i, chunk_data))
         
         if not candidate_chunks_with_indices:
