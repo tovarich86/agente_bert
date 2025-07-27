@@ -851,6 +851,26 @@ def main():
             index=0
         )
         st.markdown("---") 
+        st.header("⚙️ Opções de Busca Avançada")
+        st.caption("Refine sua busca qualitativa com filtros temporais.")
+
+        # Widget para filtrar por um ano específico
+        year_filter = st.number_input(
+        "Filtrar por ano de referência (0 para desativar)", 
+        min_value=0, 
+        max_value=datetime.now().year, 
+        value=0, # Começa desativado por padrão
+        step=1,
+        help="Filtra a busca RAG para incluir apenas documentos do ano selecionado. Deixe em 0 para buscar em todos os anos."
+        )
+
+        # Checkbox para ativar/desativar o re-ranking por recência
+        prioritize_recency = st.checkbox(
+        "Priorizar documentos mais recentes", 
+        value=True, # Ligado por padrão, pois é uma feature poderosa
+        help="Dá um bônus de relevância para os documentos mais novos, fazendo com que apareçam primeiro nos resultados."
+        )
+        st.markdown("---") 
         with st.expander("Empresas com dados no resumo"):
             st.dataframe(pd.DataFrame(sorted(list(summary_data.keys())), columns=["Empresa"]), use_container_width=True, hide_index=True)
         st.success("✅ Sistema pronto para análise")
@@ -1011,7 +1031,8 @@ def main():
                             artifacts=artifacts, 
                             model=embedding_model, 
                             kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                            filters=active_filters
+                            filters=active_filters,
+                            year_filter=year_filter
                         )
                         all_found_companies.update(companies)
 
@@ -1085,7 +1106,9 @@ def main():
                 company_catalog_rich=st.session_state.company_catalog_rich, 
                 company_lookup_map=st.session_state.company_lookup_map, 
                 summary_data=summary_data,
-                filters=active_filters
+                filters=active_filters,
+                year_filter=year_filter,
+                prioritize_recency=prioritize_recency
             )
             st.markdown(final_answer)
             
@@ -1096,6 +1119,7 @@ def main():
         # --- BLOCO CORRIGIDO ---
                     for src in sorted(sources, key=lambda x: x.get('company_name', '')):
                         company_name = src.get('company_name', 'N/A')
+                        doc_date = src.get('document_date', 'N/A') 
                         doc_type_raw = src.get('doc_type', '')
                         url = src.get('source_url', '')
 
@@ -1104,7 +1128,7 @@ def main():
                         else:
                             display_doc_type = doc_type_raw.replace('_', ' ')
             
-                        display_text = f"{company_name} - {display_doc_type}"
+                        display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)""
             
                         # A lógica de exibição agora está corretamente separada por tipo de documento
                         if "frmExibirArquivoIPEExterno" in url:
