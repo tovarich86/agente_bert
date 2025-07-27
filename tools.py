@@ -308,74 +308,77 @@ def find_companies_by_topic(
     model: SentenceTransformer,
     kb: dict,
     filters: dict = None,
+    year_filter: int = 0, # <-- Novo parâmetro integrado
     top_k: int = 20
 ) -> list[str]:
     """
-    Ferramenta de Listagem HÍBRIDA. Busca por um tópico aplicando filtros e combinando
-    busca por metadados (exata) e busca vetorial (semântica).
+    Ferramenta de Listagem HÍBRIDA (v3.0 - Otimizada).
+    - Usa a robusta busca por metadados + vetorial.
+    - Incorpora o filtro de ano.
+    - Otimiza a busca vetorial com IDSelector para máxima eficiência.
     """
     alias_map = create_hierarchical_alias_map(kb)
     topic_path = alias_map.get(topic.lower(), topic)
-    logger.info(f"Buscando empresas para o tópico '{topic}' (caminho: {topic_path}) com filtros: {filters}")
+    logger.info(f"Buscando empresas para '{topic}' (caminho: {topic_path}) com filtros: {filters} e ano: {year_filter}")
 
-    # --- Parte 1: Busca por Metadados (como na v2.1, mas com filtros) ---
     companies_from_metadata = set()
+    companies_from_vector = set()
+
+    search_query = f"regras, detalhes e funcionamento sobre {topic.replace('_', ' ')}"
+    query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
+
+    # Itera sobre os artefatos (ex: 'item_8_4', 'outros_documentos')
     for artifact_name, artifact_data in artifacts.items():
         chunk_map = artifact_data.get('chunks', {}).get('map', [])
-        if not chunk_map: continue
+        index = artifact_data.get('index')
+        if not chunk_map or not index:
+            continue
 
-        # Aplica filtros, se existirem
-        filtered_map = chunk_map
-        if filters:
-            if filters.get('setor'):
-                filtered_map = [c for c in filtered_map if c.get('setor', '').lower() == filters['setor'].lower()]
-            if filters.get('controle_acionario'):
-                filtered_map = [c for c in filtered_map if c.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()]
+        # --- Etapa 1: Pré-filtragem eficiente de chunks ---
+        candidate_chunks_with_indices = []
+        for i, chunk_data in enumerate(chunk_map):
+            # Valida filtro de setor
+            setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
+            # Valida filtro de controle
+            controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
+            # Valida filtro de ano
+            year_match = not year_filter or chunk_data.get("document_date", "").startswith(str(year_filter))
+
+            if setor_match and controle_match and year_match:
+                candidate_chunks_with_indices.append((i, chunk_data))
         
-        if not filtered_map: continue
+        if not candidate_chunks_with_indices:
+            continue
 
-        for chunk_data in filtered_map:
+        # Separa os índices e os metadados dos candidatos
+        candidate_indices = np.array([item[0] for item in candidate_chunks_with_indices], dtype=np.int64)
+        candidate_chunks = [item[1] for item in candidate_chunks_with_indices]
+
+        # --- Etapa 2: Busca por Metadados (na lista já filtrada) ---
+        for chunk_data in candidate_chunks:
             for path in chunk_data.get('topics_in_chunk', []):
                 if path.lower().startswith(topic_path.lower()):
                     companies_from_metadata.add(chunk_data["company_name"])
                     break
 
-    # --- Parte 2: Busca Vetorial Semântica (como na original, mas com filtros) ---
-    companies_from_vector = set()
-    search_query = f"regras, detalhes e funcionamento sobre {topic.replace('_', ' ')}"
-    query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
+        # --- Etapa 3: Busca Vetorial Otimizada ---
+        # Cria um seletor para dizer ao FAISS para buscar APENAS nos IDs candidatos
+        id_selector = faiss.IDSelectorArray(candidate_indices)
+        
+        # A busca agora é muito mais rápida, pois opera apenas no subconjunto de vetores
+        scores, found_indices = index.search(query_embedding, top_k, selector=id_selector)
+        
+        for idx in found_indices[0]:
+            if idx != -1: # FAISS retorna -1 se não encontrar resultados
+                company_name = chunk_map[idx].get("company_name")
+                if company_name:
+                    companies_from_vector.add(company_name)
 
-    for artifact_name, artifact_data in artifacts.items():
-        index = artifact_data.get('index')
-        chunk_map = artifact_data.get('chunks', {}).get('map', [])
-        if not index or not chunk_map: continue
-
-        _, indices = index.search(query_embedding, top_k)
-        for idx in indices[0]:
-            if idx == -1: continue
-            
-            chunk_data = chunk_map[idx]
-            company_name = chunk_data.get("company_name")
-            
-            # Valida o chunk encontrado contra os filtros
-            passes_filter = True
-            if filters:
-                if filters.get('setor') and chunk_data.get('setor', '').lower() != filters['setor'].lower():
-                    passes_filter = False
-                if filters.get('controle_acionario') and chunk_data.get('controle_acionario', '').lower() != filters['controle_acionario'].lower():
-                    passes_filter = False
-
-            if passes_filter and company_name:
-                companies_from_vector.add(company_name)
-
-    # --- Parte 3: União dos Resultados ---
+    # --- Etapa 4: União dos Resultados ---
     final_companies = sorted(list(companies_from_metadata.union(companies_from_vector)))
-    logger.info(f"Encontradas {len(final_companies)} empresas no total para o tópico '{topic}'. (Metadados: {len(companies_from_metadata)}, Vetor: {len(companies_from_vector)})")
+    logger.info(f"Encontradas {len(final_companies)} empresas no total para '{topic}'. (Metadados: {len(companies_from_metadata)}, Vetor: {len(companies_from_vector)})")
+    
     return final_companies
-
-
-# --- FERRAMENTAS DE ANÁLISE DE ALTO NÍVEL (ADAPTADAS PARA A NOVA ESTRUTURA) ---
-
 def get_summary_for_topic_at_company(
     company: str,
     topic: str,
