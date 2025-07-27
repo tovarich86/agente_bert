@@ -788,7 +788,7 @@ def handle_rag_query(
     else:
         with st.status("2️⃣ Recuperando e re-ranqueando contexto...", expanded=True) as status:
             context, all_sources_structured = execute_dynamic_plan(
-                query, plan, artifacts, embedding_model, cross_encoder_model, kb,company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms)
+                query, plan, artifacts, embedding_model, cross_encoder_model, kb,company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms, year_filter=year_filter,prioritize_recency=prioritize_recency)
             
             if not context:
                 st.error("❌ Não encontrei informações relevantes nos documentos para a sua consulta.")
