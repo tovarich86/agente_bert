@@ -463,11 +463,27 @@ def execute_dynamic_plan(
               docs_by_url = defaultdict(list)
               for chunk in chunks_for_this_company:
                     docs_by_url[chunk.get('source_url')].append(chunk)
-              MAX_DOCS_PER_COMPANY = 3 # Limita a 3 documentos por empresa
+              MAX_DOCS_PER_COMPANY = 2 # O comentário estava errado, o código usa 2
               if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
+              
+              # --- LÓGICA DE ORDENAÇÃO CORRIGIDA ---
                   def get_sort_key(url):
-                      match = re.search(r'(?:NumeroProtocoloEntrega=|rada-cvm/|/id/)\d{4,}(\d+)', str(url))
-                      return int(match.group(1)) if match else 0
+           
+                      chunks_for_url = docs_by_url.get(url, [])
+                      if not chunks_for_url:
+                          return datetime.min
+
+                      date_str = chunks_for_url[0].get("document_date")
+                      if date_str and date_str != "N/A":
+                          try:
+                              # Converte a string 'AAAA-MM-DD' para um objeto de data real
+                              return datetime.fromisoformat(date_str)
+                          except (ValueError, TypeError):
+                              # Retorna uma data muito antiga se o formato for inválido
+                              return datetime.min
+                      return datetime.min
+                  # --- FIM DA LÓGICA CORRIGIDA ---
+                  
                   sorted_urls = sorted(docs_by_url.keys(), key=get_sort_key, reverse=True)
                   latest_urls = sorted_urls[:MAX_DOCS_PER_COMPANY]
                   for url in latest_urls:
