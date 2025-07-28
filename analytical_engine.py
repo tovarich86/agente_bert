@@ -129,7 +129,7 @@ class AnalyticalEngine:
             (lambda q: 'desconto' in q and ('preco de exercicio' in q or 'strike' in q), self._analyze_strike_discount),
             
             # TSR: A regra original já era boa.
-            (lambda q: 'tsr' in q, self._analyze_tsr),
+
             
             # Malus/Clawback: Adicionado "lista", "quais" para forçar listagem.
             (lambda q: ('malus' in q or 'clawback' in q) and ('lista' in q or 'quais' in q), self._analyze_malus_clawback),
@@ -591,7 +591,7 @@ class AnalyticalEngine:
         flat_map = self._kb_flat_map()
         found_topic_details = None
         
-        # Encontra o tópico específico na pergunta (esta parte já funciona bem)
+        # Encontra o tópico específico na pergunta
         for alias in sorted(flat_map.keys(), key=len, reverse=True):
             if re.search(r'\b' + re.escape(alias) + r'\b', normalized_query):
                 found_topic_details = flat_map[alias]
@@ -602,31 +602,27 @@ class AnalyticalEngine:
 
         section, topic_name_formatted, topic_name_raw = found_topic_details
         
-        # --- LÓGICA DE BUSCA CORRIGIDA E PRECISA ---
+        # --- LÓGICA DE BUSCA PRECISA ---
         companies_with_topic = []
         for company, details in data_to_analyze.items():
-            # 1. Navega para a seção correta nos dados da empresa (ex: 'IndicadoresPerformance')
             section_data = details.get("topicos_encontrados", {}).get(section)
             if not section_data:
                 continue
 
-            # 2. Coleta TODOS os aliases/tópicos folha que foram encontrados DENTRO daquela seção PARA AQUELA EMPRESA
-            # A função _collect_leaf_aliases_recursive já faz isso perfeitamente.
+            # Coleta todos os aliases/tópicos encontrados para esta empresa nesta seção
             found_aliases_in_company = []
             self._collect_leaf_aliases_recursive(section_data, found_aliases_in_company)
 
-            # 3. Normaliza os aliases encontrados para uma busca eficiente
+            # Normaliza os aliases para a busca
             normalized_found_aliases = {self._normalize_text(a) for a in found_aliases_in_company}
 
-            # 4. Procura por todos os possíveis aliases do tópico que o usuário pediu
-            # (Ex: para 'TSR', procura por 'tsr', 'total shareholder return', etc.)
+            # Pega todos os possíveis aliases do tópico que o usuário pediu
             target_aliases = {
                 alias for alias, (s, _, t_raw) in flat_map.items()
                 if s == section and t_raw == topic_name_raw
             }
 
-            # 5. Se houver QUALQUER correspondência entre o que o usuário pediu e o que a empresa tem,
-            # a empresa é adicionada à lista.
+            # Se houver uma correspondência, a empresa é adicionada
             if not target_aliases.isdisjoint(normalized_found_aliases):
                 companies_with_topic.append(company)
 
