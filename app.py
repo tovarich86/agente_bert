@@ -339,12 +339,21 @@ def execute_dynamic_plan(
     filtros = plan.get("filtros", {})
 
     def _is_company_match(plan_canonical_name: str, metadata_name: str) -> bool:
-        if not plan_canonical_name or not metadata_name: return False
-        chunk_canonical_name = company_lookup_map.get(metadata_name.lower())
-        if chunk_canonical_name and chunk_canonical_name.lower() == plan_canonical_name.lower():
+        if not plan_canonical_name or not metadata_name: 
+            return False
+
+        # Normaliza ambos os nomes para uma comparação justa
+        plan_lower = plan_canonical_name.lower()
+        meta_lower = metadata_name.lower()
+
+        chunk_canonical_name = company_lookup_map.get(meta_lower)
+        if chunk_canonical_name and chunk_canonical_name.lower() == plan_lower:
             return True
-        searchable_part = unicodedata.normalize('NFKD', plan_canonical_name.lower()).encode('ascii', 'ignore').decode('utf-8').split(' ')[0]
-        return searchable_part in metadata_name.lower()
+        
+        if plan_lower in meta_lower:
+            return True
+
+        return False
 
     def add_candidate(chunk_info: dict):
         chunk_hash = hash(chunk_info.get("text", ""))
