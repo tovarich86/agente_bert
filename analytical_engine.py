@@ -591,7 +591,7 @@ class AnalyticalEngine:
         flat_map = self._kb_flat_map()
         found_topic_details = None
         
-        # Busca pelo alias mais longo que corresponde à pergunta
+        # Encontra o tópico específico na pergunta (esta parte já funciona bem)
         for alias in sorted(flat_map.keys(), key=len, reverse=True):
             if re.search(r'\b' + re.escape(alias) + r'\b', normalized_query):
                 found_topic_details = flat_map[alias]
@@ -602,38 +602,37 @@ class AnalyticalEngine:
 
         section, topic_name_formatted, topic_name_raw = found_topic_details
         
-        # Lógica para encontrar empresas que mencionam o tópico (incluindo sub-tópicos)
-        companies = []
-        for name, details in data_to_analyze.items():
-            if section in details.get("topicos_encontrados", {}):
-                # Using deque for a BFS-like traversal
-                queue = deque([details["topicos_encontrados"][section]])
-                found_in_company = False
-                while queue:
-                    current_node = queue.popleft()
-                    if isinstance(current_node, dict):
-                        for k, v in current_node.items():
-                            if k == topic_name_raw:
-                                found_in_company = True
-                                break
-                            if isinstance(v, dict) and 'subtopicos' in v and v['subtopicos']:
-                                queue.append(v['subtopicos'])
-                            elif isinstance(v, list):
-                                if topic_name_raw in current_node: # Check if the raw topic name is directly in a list
-                                    found_in_company = True
-                                    break
-                    elif isinstance(current_node, list): # Added this check for lists not under a specific key
-                        if topic_name_raw in current_node:
-                            found_in_company = True
-                            break
-                    if found_in_company:
-                        break # Exit inner loop once found in this company
-                if found_in_company:
-                    companies.append(name)
+        # --- LÓGICA DE BUSCA CORRIGIDA E PRECISA ---
+        companies_with_topic = []
+        for company, details in data_to_analyze.items():
+            # 1. Navega para a seção correta nos dados da empresa (ex: 'IndicadoresPerformance')
+            section_data = details.get("topicos_encontrados", {}).get(section)
+            if not section_data:
+                continue
 
-        if not companies:
+            # 2. Coleta TODOS os aliases/tópicos folha que foram encontrados DENTRO daquela seção PARA AQUELA EMPRESA
+            # A função _collect_leaf_aliases_recursive já faz isso perfeitamente.
+            found_aliases_in_company = []
+            self._collect_leaf_aliases_recursive(section_data, found_aliases_in_company)
+
+            # 3. Normaliza os aliases encontrados para uma busca eficiente
+            normalized_found_aliases = {self._normalize_text(a) for a in found_aliases_in_company}
+
+            # 4. Procura por todos os possíveis aliases do tópico que o usuário pediu
+            # (Ex: para 'TSR', procura por 'tsr', 'total shareholder return', etc.)
+            target_aliases = {
+                alias for alias, (s, _, t_raw) in flat_map.items()
+                if s == section and t_raw == topic_name_raw
+            }
+
+            # 5. Se houver QUALQUER correspondência entre o que o usuário pediu e o que a empresa tem,
+            # a empresa é adicionada à lista.
+            if not target_aliases.isdisjoint(normalized_found_aliases):
+                companies_with_topic.append(company)
+
+        if not companies_with_topic:
             return f"Nenhuma empresa encontrada com o tópico '{topic_name_formatted}' para os filtros aplicados.", None
 
-        report_text = f"Encontradas **{len(companies)}** empresas com o tópico: **{topic_name_formatted.capitalize()}**"
-        df = pd.DataFrame(sorted(companies), columns=[f"Empresas com {topic_name_formatted.capitalize()}"])
+        report_text = f"Encontradas **{len(companies_with_topic)}** empresas com o tópico: **{topic_name_formatted.capitalize()}**"
+        df = pd.DataFrame(sorted(companies_with_topic), columns=[f"Empresas com {topic_name_formatted.capitalize()}"])
         return report_text, df
