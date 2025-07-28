@@ -456,7 +456,7 @@ def execute_dynamic_plan(
 
           # --- CORREÇÃO FUNDAMENTAL: FILTRAR CHUNKS POR EMPRESA PRIMEIRO ---
           # Cria um subconjunto de chunks contendo APENAS as empresas solicitadas no plano.
-             strictly_filtered_chunks = []
+            strictly_filtered_chunks = []
             for empresa_canonica in empresas:
               chunks_for_this_company = [
                     c for c in pre_filtered_chunks if _is_company_match(empresa_canonica, c.get('company_name', ''))
