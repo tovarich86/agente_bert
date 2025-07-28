@@ -450,9 +450,9 @@ def execute_dynamic_plan(
 
         # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
         # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
-     # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
-      elif empresas and topicos:
-          logger.info(f"ROTA Default (Híbrida): Executando busca para Empresas: {empresas} e Tópicos: {topicos}")
+        # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
+        elif empresas and topicos:
+            logger.info(f"ROTA Default (Híbrida): Executando busca para Empresas: {empresas} e Tópicos: {topicos}")
 
           # --- CORREÇÃO FUNDAMENTAL: FILTRAR CHUNKS POR EMPRESA PRIMEIRO ---
           # Cria um subconjunto de chunks contendo APENAS as empresas solicitadas no plano.
