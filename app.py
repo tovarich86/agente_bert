@@ -1056,8 +1056,7 @@ def main():
                     for topic_item in topics_to_search:
                         companies = find_companies_by_topic(
                             topic=topic_item,  # Passa um único tópico (string)
-                            artifacts=artifacts, 
-                            model=embedding_model, 
+                            summary_data=summary_data, 
                             kb=DICIONARIO_UNIFICADO_HIERARQUICO,
                             filters=active_filters                            
                         )
