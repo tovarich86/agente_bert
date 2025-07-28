@@ -463,8 +463,7 @@ def execute_dynamic_plan(
               docs_by_url = defaultdict(list)
               for chunk in chunks_for_this_company:
                     docs_by_url[chunk.get('source_url')].append(chunk)
-
-               MAX_DOCS_PER_COMPANY = 3 # Limita a 3 documentos por empresa
+              MAX_DOCS_PER_COMPANY = 3 # Limita a 3 documentos por empresa
                if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
                    def get_sort_key(url):
                        match = re.search(r'(?:NumeroProtocoloEntrega=|rada-cvm/|/id/)\d{4,}(\d+)', str(url))
