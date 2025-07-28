@@ -289,54 +289,55 @@ def find_companies_by_topic(
     filters: dict = None,
     top_k: int = 20
 ) -> list[str]:
+    """
+    Ferramenta de Listagem HÍBRIDA PRECISA.
+    1. Encontra candidatos semanticamente relevantes via busca vetorial.
+    2. Valida CADA candidato para garantir que ele contenha o tópico exato nos metadados.
+    Isso garante consistência com o AnalyticalEngine.
+    """
     alias_map = create_hierarchical_alias_map(kb)
     topic_path = alias_map.get(topic.lower(), topic)
-    logger.info(f"Buscando empresas para '{topic}' (caminho: {topic_path}) com filtros: {filters}")
+    logger.info(f"Buscando empresas para o tópico '{topic}' (caminho: {topic_path}) com filtros: {filters}")
 
-    companies_from_metadata = set()
-    companies_from_vector = set()
-
+    companies_found = set()
     search_query = f"regras, detalhes e funcionamento sobre {topic.replace('_', ' ')}"
     query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
 
     for artifact_name, artifact_data in artifacts.items():
-        # LÊ A NOVA ESTRUTURA DE DADOS (LISTA PLANA)
+        # LÊ A ESTRUTURA DE DADOS DE LISTA PLANA
         chunk_list = artifact_data.get('chunks', [])
         index = artifact_data.get('index')
         if not chunk_list or not index:
             continue
 
-        # --- Parte 1: Busca por Metadados (com filtros) ---
-        for chunk_data in chunk_list:
-            setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
-            controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
-            
-            if setor_match and controle_match:
-                for path in chunk_data.get('topics_in_chunk', []):
-                    if path.lower().startswith(topic_path.lower()):
-                        companies_from_metadata.add(chunk_data["company_name"])
-                        break
+        # --- Etapa 1: Busca Vetorial para encontrar CANDIDATOS ---
+        # Fazemos uma busca mais ampla (k * 10) para ter uma boa base de candidatos
+        broader_k = top_k * 10
+        _, candidate_indices = index.search(query_embedding, broader_k)
 
-        # --- Parte 2: Busca Vetorial (com filtro em Python para compatibilidade) ---
-        # Faz uma busca mais ampla para aumentar a chance de encontrar resultados que passem no filtro.
-        broader_k = top_k * 5
-        _, indices = index.search(query_embedding, broader_k)
-
-        for idx in indices[0]:
+        # --- Etapa 2: Verificação Precisa de CADA candidato ---
+        for idx in candidate_indices[0]:
             if idx == -1: continue
             
             chunk_data = chunk_list[idx]
             company_name = chunk_data.get("company_name")
-            
-            # Valida o chunk encontrado contra os filtros
+            if not company_name: continue
+
+            # Valida o candidato contra os filtros de metadados (setor, controle)
             setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
             controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
 
-            if setor_match and controle_match and company_name:
-                companies_from_vector.add(company_name)
-
-    final_companies = sorted(list(companies_from_metadata.union(companies_from_vector)))
-    logger.info(f"Encontradas {len(final_companies)} empresas no total. (Metadados: {len(companies_from_metadata)}, Vetor: {len(companies_from_vector)})")
+            if setor_match and controle_match:
+                # **A VERIFICAÇÃO PRECISA E CRÍTICA**
+                # Procura pelo caminho exato do tópico nos metadados do chunk.
+                for path in chunk_data.get('topics_in_chunk', []):
+                    # Usamos startswith para que 'IndicadoresPerformance' encontre também 'IndicadoresPerformance,TSR'
+                    if path.lower().startswith(topic_path.lower()):
+                        companies_found.add(company_name)
+                        break # Encontrou, pode parar de procurar neste chunk
+    
+    final_companies = sorted(list(companies_found))
+    logger.info(f"Encontradas {len(final_companies)} empresas com o tópico preciso '{topic}' após verificação rigorosa.")
     return final_companies
 def get_summary_for_topic_at_company(
     company: str,
