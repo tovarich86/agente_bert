@@ -475,31 +475,31 @@ def execute_dynamic_plan(
               else:
                   strictly_filtered_chunks.extend(chunks_for_this_company)
 
-          logger.info(f"Busca focada em {len(strictly_filtered_chunks)} chunks das {len(empresas)} empresas solicitadas.")
+            logger.info(f"Busca focada em {len(strictly_filtered_chunks)} chunks das {len(empresas)} empresas solicitadas.")
           
-          if not strictly_filtered_chunks:
-              logger.warning(f"Nenhum chunk encontrado para as empresas {empresas} após a filtragem.")
-          else:
-                # Parte 1: Busca por Tags (na lista já filtrada)
-              target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
-              tagged_chunks = search_by_tags(strictly_filtered_chunks, list(target_tags))
-              for chunk_info in tagged_chunks:
-                  add_candidate(chunk_info)
+            if not strictly_filtered_chunks:
+                logger.warning(f"Nenhum chunk encontrado para as empresas {empresas} após a filtragem.")
+            else:
+                  # Parte 1: Busca por Tags (na lista já filtrada)
+                target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
+                tagged_chunks = search_by_tags(strictly_filtered_chunks, list(target_tags))
+                for chunk_info in tagged_chunks:
+                    add_candidate(chunk_info)
               
                 # Parte 2: Busca Vetorial (no conjunto minúsculo e estritamente filtrado)
-              temp_embeddings = model.encode([c['text'] for c in strictly_filtered_chunks], normalize_embeddings=True, batch_size=32).astype('float32')
-              temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
-              temp_index.add(temp_embeddings)
+                temp_embeddings = model.encode([c['text'] for c in strictly_filtered_chunks], normalize_embeddings=True, batch_size=32).astype('float32')
+                temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
+                temp_index.add(temp_embeddings)
               
-              for empresa_canonica in empresas:
-                  search_name = next((e.get("search_alias", empresa_canonica) for e in company_catalog_rich if e.get("canonical_name") == empresa_canonica), empresa_canonica)
-                  for topico in topicos:
-                      search_query = f"informações detalhadas sobre {topico} no plano da empresa {search_name}"
-                      query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
-                      _, indices = temp_index.search(query_embedding, min(TOP_K_INITIAL_RETRIEVAL, len(strictly_filtered_chunks)))
-                      for idx in indices[0]:
-                          if idx != -1:
-                              add_candidate(strictly_filtered_chunks[idx])
+                for empresa_canonica in empresas:
+                    search_name = next((e.get("search_alias", empresa_canonica) for e in company_catalog_rich if e.get("canonical_name") == empresa_canonica), empresa_canonica)
+                    for topico in topicos:
+                        search_query = f"informações detalhadas sobre {topico} no plano da empresa {search_name}"
+                        query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
+                        _, indices = temp_index.search(query_embedding, min(TOP_K_INITIAL_RETRIEVAL, len(strictly_filtered_chunks)))
+                        for idx in indices[0]:
+                            if idx != -1:
+                                add_candidate(strictly_filtered_chunks[idx])
 
    # --- ESTÁGIO 3: RE-RANKING FINAL ---
     if not candidate_chunks_dict:
