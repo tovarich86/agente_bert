@@ -61,108 +61,59 @@ class AnalyticalEngine:
 
         # --- Mapeamento Canônico de Indicadores e Categorias ---
         # Isso centraliza a lógica de unificação e categorização para análise de indicadores
+        # Em analytical_engine.py, substitua os dicionários por estes:
+
         self.INDICATOR_CANONICAL_MAP = {
-            "TSR": "TSR (Retorno Total ao Acionista)",
-            "Total Shareholder Return": "TSR (Retorno Total ao Acionista)",
-            "Retorno Total ao Acionista": "TSR (Retorno Total ao Acionista)",
-            "TSR Absoluto": "TSR (Retorno Total ao Acionista)",
-            "TSR Relativo": "TSR (Retorno Total ao Acionista)",
-            "TSR versus": "TSR (Retorno Total ao Acionista)",
-            "TSR comparado a": "TSR (Retorno Total ao Acionista)",
-
-            "Lucro": "Lucro (Geral)",
-            "lucro líquido": "Lucro (Geral)",
-            "lucro operacional": "Lucro (Geral)",
-            "lucros por ação": "Lucro (Geral)",
-            "Earnings per Share": "Lucro (Geral)",
-            "EPS": "Lucro (Geral)",
-
-            "ROIC": "ROIC (Retorno sobre Capital Investido)",
-            "retorno sobre investimentos": "ROIC (Retorno sobre Capital Investido)",
-            "retorno sobre capital": "ROIC (Retorno sobre Capital Investido)",
-            "Return on Investment": "ROIC (Retorno sobre Capital Investido)",
-            "ROCE": "ROIC (Retorno sobre Capital Investido)",
-
+            # Financeiro
+            "TSR": "TSR (Retorno Total ao Acionista)", "Total Shareholder Return": "TSR (Retorno Total ao Acionista)", "Retorno Total ao Acionista": "TSR (Retorno Total ao Acionista)", "TSR Absoluto": "TSR (Retorno Total ao Acionista)", "TSR Relativo": "TSR (Retorno Total ao Acionista)", "TSR versus": "TSR (Retorno Total ao Acionista)", "TSR comparado a": "TSR (Retorno Total ao Acionista)",
+            "Lucro": "Lucro (Geral)", "lucro líquido": "Lucro (Geral)", "lucro operacional": "Lucro (Geral)", "lucros por ação": "Lucro (Geral)", "Earnings per Share": "Lucro (Geral)", "EPS": "Lucro (Geral)",
+            "ROIC": "ROIC / ROCE (Retorno sobre Capital)", "retorno sobre investimentos": "ROIC / ROCE (Retorno sobre Capital)", "retorno sobre capital": "ROIC / ROCE (Retorno sobre Capital)", "Return on Investment": "ROIC / ROCE (Retorno sobre Capital)", "ROCE": "ROIC / ROCE (Retorno sobre Capital)",
             "EBITDA": "EBITDA",
-            "fluxo de caixa": "Fluxo de Caixa / FCF",
-            "geração de caixa": "Fluxo de Caixa / FCF",
-            "Free Cash Flow": "Fluxo de Caixa / FCF",
-            "FCF": "Fluxo de Caixa / FCF",
-            "Receita Líquida": "Receita Líquida",
-            "vendas líquidas": "Receita Líquida",
-            "margem bruta": "Margem Bruta",
-            "margem operacional": "Margem Operacional",
-            "redução de dívida": "Redução de Dívida",
-            "Dívida Líquida / EBITDA": "Dívida Líquida / EBITDA",
+            "fluxo de caixa": "Fluxo de Caixa / FCF", "geração de caixa": "Fluxo de Caixa / FCF", "Free Cash Flow": "Fluxo de Caixa / FCF", "FCF": "Fluxo de Caixa / FCF",
+            "Receita Líquida": "Receita / Vendas", "vendas líquidas": "Receita / Vendas", "receita operacional": "Receita / Vendas", "receita operacional líquida": "Receita / Vendas",
+            "margem bruta": "Margens", "margem operacional": "Margens",
+            "redução de dívida": "Alavancagem / Dívida", "Dívida Líquida / EBITDA": "Alavancagem / Dívida", "dívida financeira bruta": "Alavancagem / Dívida",
             "capital de giro": "Capital de Giro",
-            "valor econômico agregado": "Valor Econômico Agregado",
-            "CAGR": "CAGR (Taxa de Crescimento Anual Composta)",
-
-            "qualidade": "Qualidade (Operacional)",
-            "produtividade": "Produtividade (Operacional)",
-            "crescimento": "Crescimento (Operacional)",
-            "eficiência operacional": "Eficiência Operacional",
-            "desempenho de entrega": "Desempenho de Entrega",
-            "desempenho de segurança": "Desempenho de Segurança",
-            "satisfação do cliente": "Satisfação do Cliente",
-            "NPS": "NPS (Net Promoter Score)",
-            "conclusão de aquisições": "Conclusão de Aquisições (Operacional)",
-            "expansão comercial": "Expansão Comercial (Operacional)",
-
-            "IPCA": "IPCA (Inflação)",
-            "CDI": "CDI (Taxa Interbancária)",
-            "Selic": "Selic (Taxa Básica de Juros)",
-            "preço da ação": "Preço da Ação (Mercado)",
-            "cotação das ações": "Preço da Ação (Mercado)",
-            "participação de mercado": "Participação de Mercado",
-            "market share": "Participação de Mercado",
-
-            "Sustentabilidade": "ESG (Sustentabilidade)",
-            "inclusão": "ESG (Inclusão/Diversidade)",
-            "diversidade": "ESG (Inclusão/Diversidade)",
-            "Igualdade de Gênero": "ESG (Inclusão/Diversidade)",
-            "Neutralização de Emissões": "ESG (Meio Ambiente)",
-            "Redução de Emissões": "ESG (Meio Ambiente)",
-            "IAGEE": "ESG (Meio Ambiente)", # Assumindo um contexto de emissões ou energia
-            "ICMA": "ESG (Meio Ambiente)", # Assumindo um contexto de emissões ou energia
-            "objetivos de desenvolvimento sustentável": "ESG (Objetivos de Desenvolvimento Sustentável)",
-
-            # Termos que não são indicadores de performance e devem ser tratados separadamente ou ignorados em listagens diretas
-            "metas": "Outros/Genéricos",
-            "critérios de desempenho": "Outros/Genéricos",
-            "Metas de Performance": "Outros/Genéricos",
-            "Performance Shares": "Outros/Genéricos", # É um tipo de plano, não um indicador
-            "PSU": "Outros/Genéricos", # É um tipo de plano, não um indicador
-            "Peer Group": "Grupos de Comparação",
-            "Empresas Comparáveis": "Grupos de Comparação",
-            "Companhias Comparáveis": "Grupos de Comparação"
+            "valor econômico agregado": "EVA (Valor Econômico Agregado)", "Economic Value Added": "EVA (Valor Econômico Agregado)", "EVA": "EVA (Valor Econômico Agregado)",
+            "CAGR": "CAGR (Crescimento Anual)",
+            "rentabilidade": "Rentabilidade (Geral)", "retorno sobre ativo": "Rentabilidade (Geral)",
+            "custo de capital": "Custo de Capital / WACC", "WACC": "Custo de Capital / WACC", "Weighted Average Capital Cost": "Custo de Capital / WACC",
+            "Enterprise Value": "Enterprise Value (EV)", "EV": "Enterprise Value (EV)",
+            "Equity Value": "Equity Value",
+            # Operacional
+            "qualidade": "Qualidade", "produtividade": "Produtividade", "crescimento": "Crescimento de Negócio", "eficiência operacional": "Eficiência Operacional", "desempenho de entrega": "Desempenho de Entrega", "desempenho de segurança": "Segurança", "satisfação do cliente": "Satisfação do Cliente / NPS", "NPS": "Satisfação do Cliente / NPS", "conclusão de aquisições": "M&A e Expansão", "expansão comercial": "M&A e Expansão",
+            # Mercado
+            "IPCA": "Índices de Mercado (IPCA, CDI, Selic)", "CDI": "Índices de Mercado (IPCA, CDI, Selic)", "Selic": "Índices de Mercado (IPCA, CDI, Selic)",
+            "preço da ação": "Preço/Cotação da Ação", "cotação das ações": "Preço/Cotação da Ação",
+            "participação de mercado": "Market Share", "market share": "Market Share",
+            # ESG
+            "Sustentabilidade": "ESG (Sustentabilidade)", "inclusão": "ESG (Inclusão e Diversidade)", "diversidade": "ESG (Inclusão e Diversidade)", "Igualdade de Gênero": "ESG (Inclusão e Diversidade)",
+            "Neutralização de Emissões": "ESG (Ambiental)", "Redução de Emissões": "ESG (Ambiental)", "IAGEE": "ESG (Ambiental)", "ICMA": "ESG (Ambiental)",
+            "objetivos de desenvolvimento sustentável": "ESG (ODS)",
+            # Termos a serem ignorados na contagem
+            "metas": "Outros/Genéricos", "critérios de desempenho": "Outros/Genéricos", "Metas de Performance": "Outros/Genéricos", "Performance Shares": "Outros/Genéricos", "PSU": "Outros/Genéricos",
+            "Peer Group": "Grupos de Comparação", "Empresas Comparáveis": "Grupos de Comparação", "Companhias Comparáveis": "Grupos de Comparação"
         }
 
         self.INDICATOR_CATEGORIES = {
             "Financeiro": [
-                "Lucro (Geral)", "EBITDA", "Fluxo de Caixa / FCF", "ROIC (Retorno sobre Capital Investido)",
-                "CAGR (Taxa de Crescimento Anual Composta)", "Receita Líquida", "Margem Bruta",
-                "Margem Operacional", "Redução de Dívida", "Dívida Líquida / EBITDA",
-                "Capital de Giro", "Valor Econômico Agregado"
+                "Lucro (Geral)", "EBITDA", "Fluxo de Caixa / FCF", "ROIC / ROCE (Retorno sobre Capital)",
+                "CAGR (Crescimento Anual)", "Receita / Vendas", "Margens", "Alavancagem / Dívida", "Capital de Giro",
+                "EVA (Valor Econômico Agregado)", "Rentabilidade (Geral)", "Custo de Capital / WACC",
+                "Enterprise Value (EV)", "Equity Value"
             ],
             "Mercado": [
-                "TSR (Retorno Total ao Acionista)", "IPCA (Inflação)", "CDI (Taxa Interbancária)",
-                "Selic (Taxa Básica de Juros)", "Preço da Ação (Mercado)", "Participação de Mercado"
+                "TSR (Retorno Total ao Acionista)", "Índices de Mercado (IPCA, CDI, Selic)",
+                "Preço/Cotação da Ação", "Market Share"
             ],
             "Operacional": [
-                "Qualidade (Operacional)", "Produtividade (Operacional)", "Crescimento (Operacional)",
-                "Eficiência Operacional", "Desempenho de Entrega", "Desempenho de Segurança",
-                "Satisfação do Cliente", "NPS (Net Promoter Score)", "Conclusão de Aquisições (Operacional)",
-                "Expansão Comercial (Operacional)"
+                "Qualidade", "Produtividade", "Crescimento de Negócio", "Eficiência Operacional",
+                "Desempenho de Entrega", "Segurança", "Satisfação do Cliente / NPS", "M&A e Expansão"
             ],
             "ESG": [
-                "ESG (Sustentabilidade)", "ESG (Inclusão/Diversidade)", "ESG (Meio Ambiente)",
-                "ESG (Objetivos de Desenvolvimento Sustentável)"
-            ],
-            "Outros/Genéricos": ["Outros/Genéricos"], # Para agrupar termos que não são indicadores específicos
-            "Grupos de Comparação": ["Grupos de Comparação"]
+                "ESG (Sustentabilidade)", "ESG (Inclusão e Diversidade)", "ESG (Ambiental)", "ESG (ODS)"
+            ]
         }
-        
         # --- Roteador Declarativo (Completo e com todas as funções implementadas) ---
         self.intent_rules = [
             # Vesting: Adicionado "carência", "tempo", "duração"
