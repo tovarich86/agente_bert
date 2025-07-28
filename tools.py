@@ -85,46 +85,29 @@ QUESTION_TEMPLATES = {
 # --- NOVAS FUNÇÕES DE MAPEAMENTO HIERÁRQUICO (DA v2.1) ---
 
 def create_hierarchical_alias_map(kb: dict) -> dict:
-    """
-    Cria um mapeamento plano de qualquer alias (em minúsculas) para seu
-    caminho hierárquico completo. Esta versão navega corretamente
-    em TODOS os níveis do DICIONARIO_UNIFICADO_HIERARQUICO.
-    """
     alias_map = {}
-
     def _recursive_builder(sub_dict, path_so_far):
-        """Função auxiliar recursiva que percorre os nós do dicionário."""
         for topic_key, topic_data in sub_dict.items():
             current_path = path_so_far + [topic_key]
             path_str = ",".join(current_path)
-
-            # Adiciona os aliases definidos no JSON
             for alias in topic_data.get("aliases", []):
                 alias_map[alias.lower()] = path_str
-            
-            # Adiciona o nome da própria chave como um alias
             canonical_alias = topic_key.replace('_', ' ').lower()
             if canonical_alias not in alias_map:
                 alias_map[canonical_alias] = path_str
-
-            # Continua a recursão para os sub-tópicos
             if "subtopicos" in topic_data and isinstance(topic_data.get("subtopicos"), dict):
                 _recursive_builder(topic_data["subtopicos"], current_path)
 
-    # Itera sobre as seções principais do dicionário (ex: "TiposDePlano")
     for section_key, section_data in kb.items():
-        # --- ESTA É A CORREÇÃO CRÍTICA ---
-        # 1. Adiciona a própria chave da seção como um alias pesquisável
         path_str = section_key
         canonical_alias = section_key.replace('_', ' ').lower()
         if canonical_alias not in alias_map:
             alias_map[canonical_alias] = path_str
-        # ------------------------------------
-
-        # 2. Agora, inicia a recursão para os filhos da seção
         _recursive_builder(section_data, [section_key])
-        
     return alias_map
+
+# --- FUNÇÃO DE BUSCA ADAPTADA PARA A NOVA ESTRUTURA DE DADOS E FAISS COMPATÍVEL ---
+
 
 def _create_company_lookup_map(company_catalog_rich: list) -> dict:
     """
@@ -306,12 +289,6 @@ def find_companies_by_topic(
     filters: dict = None,
     top_k: int = 20
 ) -> list[str]:
-    """
-    Ferramenta de Listagem HÍBRIDA (v3.0 - Otimizada).
-    - Usa a robusta busca por metadados + vetorial.
-    - Incorpora o filtro de ano.
-    - Otimiza a busca vetorial com IDSelector para máxima eficiência.
-    """
     alias_map = create_hierarchical_alias_map(kb)
     topic_path = alias_map.get(topic.lower(), topic)
     logger.info(f"Buscando empresas para '{topic}' (caminho: {topic_path}) com filtros: {filters}")
@@ -322,57 +299,44 @@ def find_companies_by_topic(
     search_query = f"regras, detalhes e funcionamento sobre {topic.replace('_', ' ')}"
     query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
 
-    # Itera sobre os artefatos (ex: 'item_8_4', 'outros_documentos')
     for artifact_name, artifact_data in artifacts.items():
-        chunk_map = artifact_data.get('chunks', [])
+        # LÊ A NOVA ESTRUTURA DE DADOS (LISTA PLANA)
+        chunk_list = artifact_data.get('chunks', [])
         index = artifact_data.get('index')
-        if not chunk_map or not index:
+        if not chunk_list or not index:
             continue
 
-        # --- Etapa 1: Pré-filtragem eficiente de chunks ---
-        candidate_chunks_with_indices = []
-        for i, chunk_data in enumerate(chunk_map):
-            # Valida filtro de setor
+        # --- Parte 1: Busca por Metadados (com filtros) ---
+        for chunk_data in chunk_list:
             setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
-            # Valida filtro de controle
             controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
             
-            
-
             if setor_match and controle_match:
-                candidate_chunks_with_indices.append((i, chunk_data))
-        
-        if not candidate_chunks_with_indices:
-            continue
+                for path in chunk_data.get('topics_in_chunk', []):
+                    if path.lower().startswith(topic_path.lower()):
+                        companies_from_metadata.add(chunk_data["company_name"])
+                        break
 
-        # Separa os índices e os metadados dos candidatos
-        candidate_indices = np.array([item[0] for item in candidate_chunks_with_indices], dtype=np.int64)
-        candidate_chunks = [item[1] for item in candidate_chunks_with_indices]
+        # --- Parte 2: Busca Vetorial (com filtro em Python para compatibilidade) ---
+        # Faz uma busca mais ampla para aumentar a chance de encontrar resultados que passem no filtro.
+        broader_k = top_k * 5
+        _, indices = index.search(query_embedding, broader_k)
 
-        # --- Etapa 2: Busca por Metadados (na lista já filtrada) ---
-        for chunk_data in candidate_chunks:
-            for path in chunk_data.get('topics_in_chunk', []):
-                if path.lower().startswith(topic_path.lower()):
-                    companies_from_metadata.add(chunk_data["company_name"])
-                    break
+        for idx in indices[0]:
+            if idx == -1: continue
+            
+            chunk_data = chunk_list[idx]
+            company_name = chunk_data.get("company_name")
+            
+            # Valida o chunk encontrado contra os filtros
+            setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
+            controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
 
-        # --- Etapa 3: Busca Vetorial Otimizada ---
-        # Cria um seletor para dizer ao FAISS para buscar APENAS nos IDs candidatos
-        id_selector = faiss.IDSelectorArray(candidate_indices)
-        
-        # A busca agora é muito mais rápida, pois opera apenas no subconjunto de vetores
-        scores, found_indices = index.search(query_embedding, top_k, selector=id_selector)
-        
-        for idx in found_indices[0]:
-            if idx != -1: # FAISS retorna -1 se não encontrar resultados
-                company_name = chunk_map[idx].get("company_name")
-                if company_name:
-                    companies_from_vector.add(company_name)
+            if setor_match and controle_match and company_name:
+                companies_from_vector.add(company_name)
 
-    # --- Etapa 4: União dos Resultados ---
     final_companies = sorted(list(companies_from_metadata.union(companies_from_vector)))
-    logger.info(f"Encontradas {len(final_companies)} empresas no total para '{topic}'. (Metadados: {len(companies_from_metadata)}, Vetor: {len(companies_from_vector)})")
-    
+    logger.info(f"Encontradas {len(final_companies)} empresas no total. (Metadados: {len(companies_from_metadata)}, Vetor: {len(companies_from_vector)})")
     return final_companies
 def get_summary_for_topic_at_company(
     company: str,
