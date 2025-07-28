@@ -281,59 +281,51 @@ def suggest_alternative_query(failed_query: str, kb: dict) -> str:
 
 # --- FERRAMENTA DE BUSCA HÍBRIDA (LÓGICA ORIGINAL RESTAURADA E ADAPTADA) ---
 
+# Em tools.py, substitua a função inteira por esta versão final e precisa:
+
 def find_companies_by_topic(
     topic: str,
-    artifacts: dict,
-    model: SentenceTransformer,
+    summary_data: dict,  # Parâmetro principal agora
     kb: dict,
-    filters: dict = None,
-    top_k: int = 20
+    filters: dict = None
 ) -> list[str]:
     """
-    Ferramenta de Listagem HÍBRIDA ROBUSTA.
-    Combina busca vetorial com filtragem em Python para garantir compatibilidade
-    e robustez, sem depender de metadados de tópicos pré-existentes nos chunks.
+    Ferramenta de Listagem PRECISA.
+    Usa os dados de resumo pré-analisados (a mesma fonte do AnalyticalEngine)
+    para garantir uma listagem 100% consistente com a análise geral.
     """
     alias_map = create_hierarchical_alias_map(kb)
-    topic_path = alias_map.get(topic.lower(), topic)
-    logger.info(f"Buscando empresas para '{topic}' (caminho: {topic_path}) com filtros: {filters}")
+    # Precisamos encontrar o caminho completo para o tópico (ex: 'IndicadoresPerformance,TSR')
+    # para podermos procurá-lo na estrutura aninhada do resumo.
+    topic_path_str = alias_map.get(topic.lower(), topic.lower())
+    
+    logger.info(f"Buscando empresas para o tópico '{topic}' (caminho: {topic_path_str}) usando dados de resumo.")
 
-    companies_found = set()
-    search_query = f"regras, detalhes e funcionamento sobre {topic.replace('_', ' ')}"
-    query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
+    # Primeiro, aplica os filtros de metadados (setor, controle)
+    data_to_analyze = {
+        comp: data for comp, data in summary_data.items()
+        if (not filters.get('setor') or data.get('setor', '').lower() == filters['setor'].lower()) and \
+           (not filters.get('controle_acionario') or data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower())
+    }
 
-    for artifact_name, artifact_data in artifacts.items():
-        # LÊ A ESTRUTURA DE DADOS DE LISTA PLANA (CORRETO)
-        chunk_list = artifact_data.get('chunks', [])
-        index = artifact_data.get('index')
-        if not chunk_list or not index:
-            continue
+    companies_with_topic = set()
+    for company, details in data_to_analyze.items():
+        # Navega na estrutura de tópicos da empresa para ver se o tópico pesquisado existe
+        current_level = details.get("topicos_encontrados", {})
+        path_keys = topic_path_str.split(',')
+        found = True
+        for key in path_keys:
+            if isinstance(current_level, dict) and key in current_level:
+                current_level = current_level[key]
+            else:
+                found = False
+                break
+        
+        if found:
+            companies_with_topic.add(company)
 
-        # --- Etapa 1: Busca Vetorial Ampla (Lógica da versão antiga) ---
-        # Faz uma busca mais ampla para ter mais candidatos
-        broader_k = top_k * 10
-        _, indices = index.search(query_embedding, broader_k)
-
-        # --- Etapa 2: Filtragem em Python (Lógica da versão antiga) ---
-        for idx in indices[0]:
-            if idx == -1:
-                continue
-            
-            # Pega o chunk encontrado
-            chunk_data = chunk_list[idx]
-            company_name = chunk_data.get("company_name")
-            if not company_name:
-                continue
-
-            # Valida o chunk contra os filtros
-            setor_match = not filters.get('setor') or chunk_data.get('setor', '').lower() == filters['setor'].lower()
-            controle_match = not filters.get('controle_acionario') or chunk_data.get('controle_acionario', '').lower() == filters['controle_acionario'].lower()
-
-            if setor_match and controle_match:
-                companies_found.add(company_name)
-
-    final_companies = sorted(list(companies_found))
-    logger.info(f"Encontradas {len(final_companies)} empresas relevantes para '{topic}' após busca e filtragem.")
+    final_companies = sorted(list(companies_with_topic))
+    logger.info(f"Encontradas {len(final_companies)} empresas com o tópico preciso '{topic}' nos dados de resumo.")
     return final_companies
 def get_summary_for_topic_at_company(
     company: str,
