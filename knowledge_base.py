@@ -83,7 +83,7 @@ DICIONARIO_UNIFICADO_HIERARQUICO = {
     },
     "IndicadoresPerformance": {
         "ConceitoGeral_Performance": {
-            "aliases": ["Plano de Desempenho", "Metas de Performance", "critérios de desempenho", "metas"],
+            "aliases": ["Plano de Desempenho", "Metas de Performance", "critérios de desempenho", "metas", "indicadores de performance"],
             "subtopicos": {
                 "Financeiro": {
                     "aliases": [
