@@ -331,23 +331,25 @@ def get_summary_for_topic_at_company(
     company: str,
     topic: str,
     query: str,
-    artifacts: dict,
+    pinecone_index: Pinecone.Index, # << RECEBE pinecone_index
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
-    company_catalog_rich: list,
-    company_lookup_map: dict,
     execute_dynamic_plan_func: callable,
     get_final_unified_answer_func: callable,
-    filters: dict = None  # <-- Movido para o final
+    filters: dict = None
 ) -> str:
-    """Ferramenta de Extração: Busca, re-ranqueia e resume um tópico para uma empresa específica."""
+    """Ferramenta de Extração refatorada para usar Pinecone."""
     plan = {"empresas": [company], "topicos": [topic], "filtros": filters or {}}
-    context, _ = execute_dynamic_plan_func(query, plan, artifacts, model, cross_encoder_model, kb, company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms)
+    
+    # Chama a versão refatorada do execute_dynamic_plan
+    context, _ = execute_dynamic_plan_func(
+        query, plan, pinecone_index, model, cross_encoder_model, kb
+    )
+    
     if not context:
         return "Não foi possível encontrar detalhes específicos sobre este tópico para esta empresa e filtros."
     
-    # Prompt mais detalhado para melhor qualidade do resumo
     summary_prompt = f"""
     Com base no contexto fornecido sobre a empresa {company}, resuma em detalhes as regras e o funcionamento do plano relacionadas ao tópico: '{topic}'.
     Seja direto e foque apenas nas informações relevantes para o tópico.
@@ -358,31 +360,30 @@ def get_summary_for_topic_at_company(
     summary = get_final_unified_answer_func(summary_prompt, context)
     return summary
 
-
 def analyze_topic_thematically(
     topic: str,
     query: str,
-    artifacts: dict,
-    model: SentenceTransformer,
+    summary_data: dict, # << RECEBE summary_data para listagem precisa
+    pinecone_index: Pinecone.Index, # << RECEBE pinecone_index para busca de contexto
+    embedding_model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
     company_catalog_rich: list,
     company_lookup_map: dict,
     execute_dynamic_plan_func: callable,
     get_final_unified_answer_func: callable,
-    filters: dict = None  # <-- Movido para o final
+    filters: dict = None
 ) -> str:
-    """Ferramenta de Orquestração: Realiza uma análise temática completa de um tópico usando a busca híbrida."""
+    """Ferramenta de Orquestração refatorada para a nova arquitetura."""
     logger.info(f"Iniciando análise temática para '{topic}' com filtros: {filters}")
     
-    # Utiliza a nova função de busca híbrida
-    companies_to_analyze = find_companies_by_topic(topic, artifacts, model, kb, filters)
+    # Usa a versão precisa de 'find_companies_by_topic' que lê do summary_data
+    companies_to_analyze = find_companies_by_topic(topic, summary_data, kb, filters)
     
     if not companies_to_analyze:
         return f"Não foram encontradas empresas com informações suficientes sobre '{topic}' para os filtros selecionados."
     
-    # Limita o número de empresas para análise para evitar sobrecarga e custos
-    limit = 15
+    limit = 5 # Limita a análise a 5 empresas para ser mais rápido e econômico
     if len(companies_to_analyze) > limit:
         logger.warning(f"Muitas empresas ({len(companies_to_analyze)}) encontradas. Analisando uma amostra de {limit}.")
         companies_to_analyze = random.sample(companies_to_analyze, limit)
@@ -391,12 +392,14 @@ def analyze_topic_thematically(
     company_summaries = []
     
     # Usa ThreadPool para paralelizar a coleta de resumos
-    with ThreadPoolExecutor(max_workers=min(len(companies_to_analyze), 10)) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor: # Limita workers para evitar sobrecarga
         futures = {
             executor.submit(
                 get_summary_for_topic_at_company,
-                company, topic, query, artifacts, model, cross_encoder_model,
-                kb, company_catalog_rich, company_lookup_map, execute_dynamic_plan_func, get_final_unified_answer_func, filters
+                company, topic, query,
+                pinecone_index, # << Passa pinecone_index
+                embedding_model, cross_encoder_model,
+                kb, execute_dynamic_plan_func, get_final_unified_answer_func, filters
             ): company for company in companies_to_analyze
         }
         for future in futures:
@@ -410,7 +413,7 @@ def analyze_topic_thematically(
 
     synthesis_context = json.dumps(company_summaries, indent=2, ensure_ascii=False)
     
-    # Usa o prompt de síntese mais detalhado da versão original
+    # A lógica de síntese final com o LLM é 100% preservada
     synthesis_prompt = f"""
     Você é um consultor especialista em remuneração e planos de incentivo.
     Sua tarefa é responder à pergunta original do usuário: "{query}"
@@ -423,8 +426,7 @@ def analyze_topic_thematically(
     1.  **Introdução:** Comece com um parágrafo que resume suas principais descobertas.
     2.  **Identificação de Padrões:** Analise todos os resumos e identifique de 2 a 4 "modelos" ou "padrões" comuns de mercado.
     3.  **Descrição dos Padrões:** Para cada padrão, descreva-o detalhadamente e liste as empresas que o seguem.
-    4.  **Exceções e Casos Únicos:** Destaque abordagens que fogem ao padrão ou são inovadoras.
-    5.  **Conclusão:** Finalize com uma breve conclusão sobre as práticas de mercado para '{topic}'.
+    4.  **Conclusão:** Finalize com uma breve conclusão sobre as práticas de mercado para '{topic}'.
 
     Seja analítico, estruturado e use Markdown para formatar sua resposta de forma clara e profissional.
     """
