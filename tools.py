@@ -27,6 +27,7 @@ import logging
 import random
 from datetime import datetime
 import math
+from pinecone import Pinecone
 
 logger = logging.getLogger(__name__)
 
