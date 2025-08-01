@@ -286,6 +286,8 @@ def get_query_intent_with_llm(query: str) -> str:
 # Em app.py, substitua esta função
 # Em app_pinecone.py, substitua a função inteira por esta:
 
+# Em app_pinecone.py, substitua a função pela sua versão final e corrigida:
+
 def execute_dynamic_plan(
     query: str,
     plan: dict,
@@ -298,28 +300,25 @@ def execute_dynamic_plan(
     expand_search_terms: callable,
 ) -> tuple[str, list[dict]]:
     """
-    Versão 3.0 (Final e Completa) do Executor de Planos para Pinecone.
-
-    Esta versão contém toda a robustez da original, incluindo:
-    1.  Busca Híbrida (Vetorial + Tags).
-    2.  Roteamento de busca adaptativo (ex: Item 8.4).
-    3.  Filtragem flexível por nome de empresa (com aliases).
-    4.  LÓGICA DE RECÊNCIA: Prioriza os documentos mais recentes de cada empresa.
+    Versão 4.0 (Estratégia Corrigida) do Executor de Planos para Pinecone.
+    Esta versão corrige a estratégia de busca para emular a robustez da original:
+    1.  Realiza múltiplas buscas vetoriais para criar um "universo" amplo de candidatos.
+    2.  Aplica as lógicas de busca por tags e recência sobre este universo expandido.
     """
-    logger.info(f"Executando plano v3.0 (Final) para query: '{query}'")
+    logger.info(f"Executando plano v4.0 (Estratégia Corrigida) para query: '{query}'")
 
-    # --- ETAPAS 1 E 2: CONFIGURAÇÃO E CONSTRUÇÃO DA CONSULTA (Sem alterações) ---
+    # --- ETAPA 1: CONFIGURAÇÃO (Sem alterações) ---
     plan_type = plan.get("plan_type", "default")
     empresas = plan.get("empresas", [])
     topicos = plan.get("topicos", [])
     filtros = plan.get("filtros", {})
 
-    TOP_K_INITIAL_RETRIEVAL = 75
+    TOP_K_INITIAL_RETRIEVAL = 50 # Resultados por query, o total será maior
     TOP_K_FINAL = 10
     candidate_chunks_dict = {}
 
+    # --- ETAPA 2: CONSTRUÇÃO DO FILTRO (Sem alterações) ---
     pinecone_filter = {}
-    semantic_query = query
     if filtros.get('setor'):
         pinecone_filter['setor'] = filtros['setor'].capitalize()
     if filtros.get('controle_acionario'):
@@ -335,57 +334,74 @@ def execute_dynamic_plan(
                     break
         pinecone_filter['company_name'] = {"$in": list(all_company_names_to_search)}
 
-    if plan_type == "section_8_4" and empresas:
-        logger.info("ROTA DETECTADA: Otimizando busca para 'Item 8.4'")
-        pinecone_filter['doc_type'] = 'item_8_4'
-        semantic_query = f"análise completa do item 8.4 do formulário de referência da empresa {empresas[0]} sobre a remuneração dos administradores"
-    elif topicos:
-        expanded_topics = expand_search_terms(topicos[0], kb)
-        if empresas:
-            semantic_query = f"informações detalhadas sobre {', '.join(topicos)} no plano da empresa {empresas[0]}"
-        else:
-            semantic_query = f"explicação detalhada sobre o conceito e funcionamento de {expanded_topics[0]}"
-
-    logger.info(f"Query Semântica Final: '{semantic_query}'")
-    logger.info(f"Filtro de Metadados Final para Pinecone: {pinecone_filter}")
-
-    # --- ETAPA 3 E 4: BUSCA HÍBRIDA (VETORIAL + TAGS) (Sem alterações) ---
-    query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
-    try:
-        results = pinecone_index.query(vector=query_embedding, top_k=TOP_K_INITIAL_RETRIEVAL, filter=pinecone_filter, include_metadata=True)
-        vector_search_candidates = [match['metadata'] for match in results.get('matches', [])]
-    except Exception as e:
-        st.error(f"Ocorreu um erro ao buscar na base de conhecimento: {e}")
-        return "", []
-
-    tag_search_candidates = []
-    if topicos:
-        all_target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
-        tag_search_candidates = search_by_tags(vector_search_candidates, list(all_target_tags))
-
-    # --- ETAPA 5: COMBINAR E DEDUPLICAR (Sem alterações) ---
+    # --- INÍCIO DA MUDANÇA DE ESTRATÉGIA ---
+    # ETAPA 3: MÚLTIPLAS BUSCAS VETORIAIS PARA CRIAR UM UNIVERSO AMPLO
+    
+    # Função auxiliar para adicionar candidatos ao dicionário e evitar duplicatas
     def add_candidate(chunk_info):
         chunk_id = chunk_info.get('id', hash(chunk_info.get("text", "")))
         if chunk_id not in candidate_chunks_dict:
             candidate_chunks_dict[chunk_id] = chunk_info
 
-    for chunk in vector_search_candidates: add_candidate(chunk)
-    for chunk in tag_search_candidates: add_candidate(chunk)
-    
+    # Lista de queries a serem executadas
+    search_queries = []
+    if topicos:
+        # Cria queries específicas para cada tópico
+        for topico in topicos:
+            expanded_terms = expand_search_terms(topico, kb)
+            base_query = f"detalhes sobre {expanded_terms[0]}"
+            if empresas:
+                base_query += f" no plano da empresa {empresas[0]}"
+            search_queries.append(base_query)
+    else:
+        # Se não houver tópico, a própria query do usuário é a busca
+        search_queries.append(query)
+        
+    logger.info(f"Executando {len(search_queries)} buscas vetoriais para construir o universo de candidatos.")
+
+    for semantic_query in search_queries:
+        query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
+        try:
+            results = pinecone_index.query(
+                vector=query_embedding,
+                top_k=TOP_K_INITIAL_RETRIEVAL,
+                filter=pinecone_filter if pinecone_filter else None,
+                include_metadata=True
+            )
+            for match in results.get('matches', []):
+                add_candidate(match['metadata'])
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao buscar na base de conhecimento: {e}")
+            return "", []
+
+    logger.info(f"Universo inicial construído com {len(candidate_chunks_dict)} chunks únicos.")
+    initial_candidates = list(candidate_chunks_dict.values())
+    # --- FIM DA MUDANÇA DE ESTRATÉGIA ---
+
+
+    # --- ETAPA 4: BUSCA HÍBRIDA POR TAGS (Agora sobre o universo expandido) ---
+    if topicos:
+        all_target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
+        logger.info(f"Executando busca por tags no universo de {len(initial_candidates)} chunks.")
+        tag_search_candidates = search_by_tags(initial_candidates, list(all_target_tags))
+        for chunk in tag_search_candidates:
+            add_candidate(chunk)
+        logger.info(f"Após busca por tags, o total de candidatos únicos é {len(candidate_chunks_dict)}.")
+
     candidate_list = list(candidate_chunks_dict.values())
     if not candidate_list:
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
-    # --- INÍCIO DA NOVA LÓGICA ---
-    # ETAPA 5.5: LÓGICA DE RECÊNCIA DE DOCUMENTOS (PÓS-FILTRAGEM)
+    # --- ETAPA 5: LÓGICA DE RECÊNCIA (Agora sobre o universo expandido) ---
     final_candidate_list = []
+    # (O restante da função, a partir daqui, é o que já havíamos corrigido na etapa anterior)
     if empresas:
+        # ... (código da lógica de recência permanece o mesmo)
         logger.info(f"Aplicando filtro de recência para as empresas: {empresas}")
         candidates_by_company = defaultdict(list)
         for chunk in candidate_list:
-            # Agrupa apenas chunks que pertencem às empresas da query
             chunk_company = chunk.get('company_name')
-            if chunk_company in all_company_names_to_search:
+            if chunk_company and chunk_company in all_company_names_to_search:
                  candidates_by_company[chunk_company].append(chunk)
 
         for company_name, company_chunks in candidates_by_company.items():
@@ -411,19 +427,21 @@ def execute_dynamic_plan(
             else:
                 final_candidate_list.extend(company_chunks)
     else:
-        final_candidate_list = candidate_list # Se a busca for geral, usa todos os candidatos
+        final_candidate_list = candidate_list
 
     logger.info(f"Após filtro de recência, {len(final_candidate_list)} chunks foram selecionados para re-ranqueamento.")
-    # --- FIM DA NOVA LÓGICA ---
-
+    
     # --- ETAPA 6: RE-RANKING E CONSTRUÇÃO DO CONTEXTO FINAL ---
+    if not final_candidate_list:
+        return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
+
     reranked_chunks = rerank_with_cross_encoder(query, final_candidate_list, cross_encoder_model, top_n=TOP_K_FINAL)
 
     full_context = ""
     retrieved_sources = []
     seen_sources = set()
-
     for chunk in reranked_chunks:
+        #... (código de construção do contexto final permanece o mesmo)
         company_name = chunk.get('company_name', 'N/A')
         source_url = chunk.get('source_url', 'N/A')
         doc_type = chunk.get('doc_type', 'N/A')
@@ -436,10 +454,9 @@ def execute_dynamic_plan(
         if source_tuple not in seen_sources:
             seen_sources.add(source_tuple)
             retrieved_sources.append(chunk)
-            
+
     logger.info(f"Contexto final construído a partir de {len(reranked_chunks)} chunks re-ranqueados.")
     return full_context, retrieved_sources
-
 def create_dynamic_analysis_plan(query, company_catalog_rich, kb, summary_data, filters: dict):
     """
     Versão 3.0 (Unificada) do planejador dinâmico.
@@ -935,22 +952,29 @@ def main():
         # --- INÍCIO DA NOVA LÓGICA DE ROTEAMENTO HÍBRIDO ---
         intent = None
         query_lower = user_query.lower()
-        final_answer = ""
-        sources = []
 
-        # 1. Camada de Regras
-        quantitative_keywords = [
-            'liste', 'quais empresas', 'quais companhias', 'quantas', 'média',
-            'mediana', 'estatísticas', 'mais comuns', 'prevalência', 'contagem'
-        ]
-        if any(keyword in query_lower for keyword in quantitative_keywords):
-            intent = "quantitativa"
-            logger.info("Intenção 'quantitativa' detectada por regras de palavras-chave.")
+    
+        qualitative_force_keywords = ['resumo', 'descreva', 'detalhe', 'explique', 'como funciona', 'item 8.4', 'seção 8.4']
+        if any(keyword in query_lower for keyword in qualitative_force_keywords):
+            intent = "qualitativa"
+            logger.info(f"Intenção 'qualitativa' detectada por regra de forçamento de palavra-chave (ex: 'resumo', 'item 8.4').")
 
-        # 2. Camada de LLM
+        # Camada 2: Regras para intenção QUANTITATIVA (se a camada 1 não foi acionada).
+        if intent is None:
+            quantitative_keywords = [
+                'liste', 'quais empresas', 'quais companhias', 'quantas', 'média',
+                'mediana', 'estatísticas', 'mais comuns', 'prevalência', 'contagem'
+            ]
+            if any(keyword in query_lower for keyword in quantitative_keywords):
+                intent = "quantitativa"
+                logger.info("Intenção 'quantitativa' detectada por regras de palavras-chave.")
+
+        # Camada 3: Usar o LLM como um fallback, caso nenhuma regra se aplique.
         if intent is None:
             with st.spinner("Analisando a intenção da sua pergunta..."):
                 intent = get_query_intent_with_llm(user_query)
+    
+        logger.info(f"Decisão Final de Roteamento: A intenção é '{intent}'.")
         
         # --- FIM DA NOVA LÓGICA DE ROTEAMENTO HÍBRIDO ---
 
