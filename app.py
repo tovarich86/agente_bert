@@ -284,6 +284,8 @@ def get_query_intent_with_llm(query: str) -> str:
 # <<< MELHORIA 2 APLICADA >>>
 # Função modificada para lidar com buscas gerais (sem empresa)
 # Em app.py, substitua esta função
+# Em app_pinecone.py, substitua a função inteira por esta:
+
 def execute_dynamic_plan(
     query: str,
     plan: dict,
@@ -291,64 +293,132 @@ def execute_dynamic_plan(
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
-    # Os parâmetros extras da versão antiga já foram removidos na refatoração anterior
+    company_catalog_rich: list,
+    search_by_tags: callable,
+    expand_search_terms: callable,
 ) -> tuple[str, list[dict]]:
     """
-    Versão Final e Refatorada: Executa o plano de busca via Pinecone,
-    re-ranqueia os resultados e constrói o contexto final.
-    """
-    logger.info(f"Executando plano de busca via Pinecone para query: '{query}'")
+    Versão 3.0 (Final e Completa) do Executor de Planos para Pinecone.
 
-    # --- ETAPA 1: PREPARAR A CONSULTA ---
-    topicos = plan.get("topicos", [])
+    Esta versão contém toda a robustez da original, incluindo:
+    1.  Busca Híbrida (Vetorial + Tags).
+    2.  Roteamento de busca adaptativo (ex: Item 8.4).
+    3.  Filtragem flexível por nome de empresa (com aliases).
+    4.  LÓGICA DE RECÊNCIA: Prioriza os documentos mais recentes de cada empresa.
+    """
+    logger.info(f"Executando plano v3.0 (Final) para query: '{query}'")
+
+    # --- ETAPAS 1 E 2: CONFIGURAÇÃO E CONSTRUÇÃO DA CONSULTA (Sem alterações) ---
+    plan_type = plan.get("plan_type", "default")
     empresas = plan.get("empresas", [])
+    topicos = plan.get("topicos", [])
     filtros = plan.get("filtros", {})
 
-    TOP_K_INITIAL_RETRIEVAL = 50
+    TOP_K_INITIAL_RETRIEVAL = 75
     TOP_K_FINAL = 10
-
-    semantic_query = f"informações detalhadas sobre {', '.join(topicos)} para as empresas {', '.join(empresas)}"
-    if not topicos and not empresas:
-        semantic_query = query
-
-    query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
+    candidate_chunks_dict = {}
 
     pinecone_filter = {}
+    semantic_query = query
     if filtros.get('setor'):
         pinecone_filter['setor'] = filtros['setor'].capitalize()
     if filtros.get('controle_acionario'):
         pinecone_filter['controle_acionario'] = filtros['controle_acionario'].capitalize()
+
     if empresas:
-        pinecone_filter['company_name'] = {"$in": empresas}
+        all_company_names_to_search = set()
+        for company_canonical_name in empresas:
+            all_company_names_to_search.add(company_canonical_name)
+            for company_data in company_catalog_rich:
+                if company_data.get("canonical_name") == company_canonical_name:
+                    all_company_names_to_search.update(company_data.get("aliases", []))
+                    break
+        pinecone_filter['company_name'] = {"$in": list(all_company_names_to_search)}
 
-    logger.info(f"Consultando Pinecone com o seguinte filtro de metadados: {pinecone_filter}")
+    if plan_type == "section_8_4" and empresas:
+        logger.info("ROTA DETECTADA: Otimizando busca para 'Item 8.4'")
+        pinecone_filter['doc_type'] = 'item_8_4'
+        semantic_query = f"análise completa do item 8.4 do formulário de referência da empresa {empresas[0]} sobre a remuneração dos administradores"
+    elif topicos:
+        expanded_topics = expand_search_terms(topicos[0], kb)
+        if empresas:
+            semantic_query = f"informações detalhadas sobre {', '.join(topicos)} no plano da empresa {empresas[0]}"
+        else:
+            semantic_query = f"explicação detalhada sobre o conceito e funcionamento de {expanded_topics[0]}"
 
-    # --- ETAPA 2: EXECUTAR A BUSCA ---
+    logger.info(f"Query Semântica Final: '{semantic_query}'")
+    logger.info(f"Filtro de Metadados Final para Pinecone: {pinecone_filter}")
+
+    # --- ETAPA 3 E 4: BUSCA HÍBRIDA (VETORIAL + TAGS) (Sem alterações) ---
+    query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
     try:
-        results = pinecone_index.query(
-            vector=query_embedding,
-            top_k=TOP_K_INITIAL_RETRIEVAL,
-            filter=pinecone_filter if pinecone_filter else None,
-            include_metadata=True
-        )
-        # O resultado da busca agora é uma lista limpa chamada 'candidate_chunks'
-        candidate_chunks = [match['metadata'] for match in results.get('matches', [])]
+        results = pinecone_index.query(vector=query_embedding, top_k=TOP_K_INITIAL_RETRIEVAL, filter=pinecone_filter, include_metadata=True)
+        vector_search_candidates = [match['metadata'] for match in results.get('matches', [])]
     except Exception as e:
-        logger.error(f"Erro ao consultar o Pinecone: {e}")
-        st.error(f"Ocorreu um erro ao buscar na base de conhecimento. Detalhes: {e}")
+        st.error(f"Ocorreu um erro ao buscar na base de conhecimento: {e}")
         return "", []
 
-    # --- ETAPA 3: RE-RANKING (COM A VERIFICAÇÃO CORRIGIDA) ---
+    tag_search_candidates = []
+    if topicos:
+        all_target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
+        tag_search_candidates = search_by_tags(vector_search_candidates, list(all_target_tags))
 
-    # CORREÇÃO: A verificação agora é feita na lista 'candidate_chunks'
-    if not candidate_chunks:
-        logger.warning(f"Nenhum chunk candidato encontrado para a query: '{query}' com os filtros aplicados.")
+    # --- ETAPA 5: COMBINAR E DEDUPLICAR (Sem alterações) ---
+    def add_candidate(chunk_info):
+        chunk_id = chunk_info.get('id', hash(chunk_info.get("text", "")))
+        if chunk_id not in candidate_chunks_dict:
+            candidate_chunks_dict[chunk_id] = chunk_info
+
+    for chunk in vector_search_candidates: add_candidate(chunk)
+    for chunk in tag_search_candidates: add_candidate(chunk)
+    
+    candidate_list = list(candidate_chunks_dict.values())
+    if not candidate_list:
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
-    logger.info(f"Total de {len(candidate_chunks)} chunks candidatos únicos encontrados. Re-ranqueando...")
-    reranked_chunks = rerank_with_cross_encoder(query, candidate_chunks, cross_encoder_model, top_n=TOP_K_FINAL)
+    # --- INÍCIO DA NOVA LÓGICA ---
+    # ETAPA 5.5: LÓGICA DE RECÊNCIA DE DOCUMENTOS (PÓS-FILTRAGEM)
+    final_candidate_list = []
+    if empresas:
+        logger.info(f"Aplicando filtro de recência para as empresas: {empresas}")
+        candidates_by_company = defaultdict(list)
+        for chunk in candidate_list:
+            # Agrupa apenas chunks que pertencem às empresas da query
+            chunk_company = chunk.get('company_name')
+            if chunk_company in all_company_names_to_search:
+                 candidates_by_company[chunk_company].append(chunk)
 
-    # --- ETAPA 4: CONSTRUÇÃO DO CONTEXTO FINAL (Sem alterações) ---
+        for company_name, company_chunks in candidates_by_company.items():
+            docs_by_url = defaultdict(list)
+            for chunk in company_chunks:
+                docs_by_url[chunk.get('source_url')].append(chunk)
+
+            MAX_DOCS_PER_COMPANY = 2
+            if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
+                def get_sort_key(url):
+                    chunks_for_url = docs_by_url.get(url, [])
+                    if not chunks_for_url: return datetime.min
+                    date_str = chunks_for_url[0].get("document_date")
+                    if date_str and date_str != "N/A":
+                        try: return datetime.fromisoformat(date_str)
+                        except (ValueError, TypeError): return datetime.min
+                    return datetime.min
+
+                sorted_urls = sorted(docs_by_url.keys(), key=get_sort_key, reverse=True)
+                latest_urls = sorted_urls[:MAX_DOCS_PER_COMPANY]
+                for url in latest_urls:
+                    final_candidate_list.extend(docs_by_url[url])
+            else:
+                final_candidate_list.extend(company_chunks)
+    else:
+        final_candidate_list = candidate_list # Se a busca for geral, usa todos os candidatos
+
+    logger.info(f"Após filtro de recência, {len(final_candidate_list)} chunks foram selecionados para re-ranqueamento.")
+    # --- FIM DA NOVA LÓGICA ---
+
+    # --- ETAPA 6: RE-RANKING E CONSTRUÇÃO DO CONTEXTO FINAL ---
+    reranked_chunks = rerank_with_cross_encoder(query, final_candidate_list, cross_encoder_model, top_n=TOP_K_FINAL)
+
     full_context = ""
     retrieved_sources = []
     seen_sources = set()
@@ -356,16 +426,17 @@ def execute_dynamic_plan(
     for chunk in reranked_chunks:
         company_name = chunk.get('company_name', 'N/A')
         source_url = chunk.get('source_url', 'N/A')
-
-        source_header = f"(Empresa: {company_name}, Setor: {chunk.get('setor', 'N/A')})"
+        doc_type = chunk.get('doc_type', 'N/A')
+        
+        source_header = f"(Empresa: {company_name}, Setor: {chunk.get('setor', 'N/A')}, Documento: {doc_type})"
         clean_text = chunk.get('text', '').strip()
         full_context += f"--- CONTEÚDO RELEVANTE {source_header} ---\n{clean_text}\n\n"
-
+        
         source_tuple = (company_name, source_url)
         if source_tuple not in seen_sources:
             seen_sources.add(source_tuple)
             retrieved_sources.append(chunk)
-
+            
     logger.info(f"Contexto final construído a partir de {len(reranked_chunks)} chunks re-ranqueados.")
     return full_context, retrieved_sources
 
@@ -490,33 +561,39 @@ def analyze_single_company(
     empresa: str,
     plan: dict,
     query: str,
-    pinecone_index: Pinecone.Index, # << RECEBE pinecone_index
+    pinecone_index: Pinecone.Index,
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
     company_catalog_rich: list,
     company_lookup_map: dict,
     execute_dynamic_plan_func: callable,
-    get_final_unified_answer_func: callable
+    get_final_unified_answer_func: callable,
+    # --- NOVOS PARÂMETROS ADICIONADOS ---
+    search_by_tags: callable,
+    expand_search_terms: callable
 ) -> dict:
     """
-    Executa o plano de análise para uma única empresa usando a nova arquitetura Pinecone.
+    Executa o plano de análise para uma única empresa e retorna um dicionário estruturado.
+    Esta função é projetada para ser executada em um processo paralelo.
     """
-    # A lógica de criar um plano específico para a empresa é mantida
     single_plan = {
         'empresas': [empresa],
         'topicos': plan['topicos'],
         'filtros': plan.get('filtros', {})
     }
 
-    # Chama a nova versão refatorada do executor de planos
+    # --- CHAMADA ATUALIZADA PARA INCLUIR TODOS OS PARÂMETROS NECESSÁRIOS ---
     context, sources_list = execute_dynamic_plan_func(
         query,
         single_plan,
-        pinecone_index, # << PASSA pinecone_index
+        pinecone_index,
         model,
         cross_encoder_model,
-        kb
+        kb,
+        company_catalog_rich,
+        search_by_tags,
+        expand_search_terms
     )
 
     result_data = {
@@ -525,7 +602,6 @@ def analyze_single_company(
         "sources": sources_list
     }
 
-    # A lógica de resumir o contexto com o LLM é 100% preservada
     if context:
         summary_prompt = f"""
         Com base no CONTEXTO abaixo sobre a empresa {empresa}, crie um resumo para cada um dos TÓPICOS solicitados.
@@ -559,9 +635,11 @@ def analyze_single_company(
     return result_data
 
 
+# Em app_pinecone.py, substitua pela versão definitiva e completa de handle_rag_query:
+
 def handle_rag_query(
     query: str,
-    pinecone_index: Pinecone.Index, # << RECEBE pinecone_index
+    pinecone_index: Pinecone.Index,
     embedding_model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
@@ -571,95 +649,81 @@ def handle_rag_query(
     filters: dict
 ) -> tuple[str, list[dict]]:
     """
-    Orquestra o pipeline de RAG para perguntas qualitativas, incluindo a geração do plano,
-    a execução da busca (com re-ranking) e a síntese da resposta final.
+    Versão Final e Robusta do orquestrador de RAG para a arquitetura Pinecone.
+
+    Esta função espelha a completude da versão original (FAISS), garantindo que
+    a execução do plano de análise seja feita com todas as lógicas de robustez
+    (busca híbrida, flexibilidade de nomes, recência) agora embutidas nas
+    funções que ela chama.
     """
     with st.status("1️⃣ Gerando plano de análise...", expanded=True) as status:
         plan_response = create_dynamic_analysis_plan(query, company_catalog_rich, kb, summary_data, filters)
 
+        # Bloco de tratamento de falha na criação do plano (preservado da original)
         if plan_response['status'] != "success":
             status.update(label="⚠️ Falha na identificação", state="error", expanded=True)
-
             st.warning("Não consegui identificar uma empresa conhecida na sua pergunta para realizar uma análise profunda.")
             st.info("Para análises detalhadas, por favor, use o nome de uma das empresas listadas na barra lateral.")
-
             with st.spinner("Estou pensando em uma pergunta alternativa que eu possa responder..."):
-                alternative_query = suggest_alternative_query(query, kb) # Passe o kb
-
+                alternative_query = suggest_alternative_query(query, kb)
             st.markdown("#### Que tal tentar uma pergunta mais geral?")
             st.markdown("Você pode copiar a sugestão abaixo ou reformular sua pergunta original.")
             st.code(alternative_query, language=None)
-
-            # Retornamos uma string vazia para o texto e para as fontes, encerrando a análise de forma limpa.
             return "", []
-        # --- FIM DO NOVO BLOCO ---
 
         plan = plan_response['plan']
 
-        summary_keywords = ['resumo', 'geral', 'completo', 'visão geral', 'como funciona o plano', 'detalhes do plano']
-        is_summary_request = any(keyword in query.lower() for keyword in summary_keywords)
-
-        specific_topics_in_query = list({canonical for alias, canonical in _create_flat_alias_map(kb).items() if re.search(r'\b' + re.escape(alias) + r'\b', query.lower())})
-        is_summary_plan = is_summary_request and not specific_topics_in_query
-
+        # Bloco de exibição de informações do plano para o usuário (preservado da original)
         if plan['empresas']:
             st.write(f"**🏢 Empresas identificadas:** {', '.join(plan['empresas'])}")
         else:
             st.write("**🏢 Nenhuma empresa específica identificada. Realizando busca geral.**")
-
         st.write(f"**📝 Tópicos a analisar:** {', '.join(plan['topicos'])}")
-        if is_summary_plan:
-            st.info("💡 Modo de resumo geral ativado. A busca será otimizada para os tópicos encontrados.")
-
         status.update(label="✅ Plano gerado com sucesso!", state="complete")
 
     final_answer, all_sources_structured = "", []
     seen_sources_tuples = set()
 
-    # --- Lógica para Múltiplas Empresas (Comparação) ---
+    # --- LÓGICA PARA MÚLTIPLAS EMPRESAS (COMPARAÇÃO) ---
     if len(plan.get('empresas', [])) > 1:
-        st.info(f"Modo de comparação ativado para {len(plan['empresas'])} empresas...")
-
-        with st.spinner(f"Analisando {len(plan['empresas'])} empresas em paralelo..."):
+        st.info(f"Modo de comparação ativado para {len(plan['empresas'])} empresas. Executando análises em paralelo...")
+        with st.spinner(f"Analisando {len(plan['empresas'])} empresas..."):
             with ThreadPoolExecutor(max_workers=len(plan['empresas'])) as executor:
+                # A chamada ao `submit` agora é completa, passando todas as dependências necessárias.
                 futures = [
                     executor.submit(
-                        analyze_single_company, # Chama a nova versão da função
+                        analyze_single_company,
                         empresa, plan, query,
-                        pinecone_index, # << Passando o índice Pinecone
+                        pinecone_index,
                         embedding_model, cross_encoder_model, kb,
                         company_catalog_rich, company_lookup_map,
-                        execute_dynamic_plan, get_final_unified_answer
+                        execute_dynamic_plan, get_final_unified_answer,
+                        search_by_tags, expand_search_terms
                     ) for empresa in plan['empresas']
                 ]
                 results = [future.result() for future in futures]
 
+        # Coleta as fontes de todos os resultados paralelos
         for result in results:
             for src_dict in result.get('sources', []):
-                company_name = src_dict.get('company_name')
-                source_url = src_dict.get('source_url')
-
-                if company_name and source_url:
-                    src_tuple = (company_name, source_url)
-                    if src_tuple not in seen_sources_tuples:
-                        seen_sources_tuples.add(src_tuple)
-                        all_sources_structured.append(src_dict)
+                source_tuple = (src_dict.get('company_name'), src_dict.get('source_url'))
+                if source_tuple not in seen_sources_tuples:
+                    seen_sources_tuples.add(source_tuple)
+                    all_sources_structured.append(src_dict)
 
         with st.status("Gerando relatório comparativo final...", expanded=True) as status:
+            # Lógica de limpeza dos resultados antes de enviar ao LLM (preservada da original)
             clean_results = []
             for company_result in results:
-                # Remove a chave 'sources' temporariamente para limpeza
                 sources = company_result.pop("sources", [])
                 clean_sources = []
                 for source_chunk in sources:
-                    # Remove a chave 'relevance_score' de cada chunk
                     source_chunk.pop('relevance_score', None)
                     clean_sources.append(source_chunk)
-
-                # Adiciona as fontes limpas de volta
                 company_result["sources"] = clean_sources
                 clean_results.append(company_result)
-            structured_context = json.dumps(results, indent=2, ensure_ascii=False)
+
+            structured_context = json.dumps(clean_results, indent=2, ensure_ascii=False)
             comparison_prompt = f"""
             Sua tarefa é criar um relatório comparativo detalhado sobre "{query}".
             Use os dados estruturados fornecidos no CONTEXTO JSON abaixo.
@@ -671,14 +735,19 @@ def handle_rag_query(
             final_answer = get_final_unified_answer(comparison_prompt, structured_context)
             status.update(label="✅ Relatório comparativo gerado!", state="complete")
 
-    # --- Lógica para Empresa Única ou Busca Geral ---
+    # --- LÓGICA PARA EMPRESA ÚNICA OU BUSCA GERAL ---
     else:
-        with st.status("2️⃣ Recuperando contexto via Pinecone...", expanded=True) as status:
-            context, all_sources_structured = execute_dynamic_plan(
+        with st.status("2️⃣ Recuperando e re-ranqueando contexto...", expanded=True) as status:
+            # A chamada direta a `execute_dynamic_plan` agora é completa.
+            context, sources = execute_dynamic_plan(
                 query, plan,
-                pinecone_index, # << Passando o índice Pinecone
-                embedding_model, cross_encoder_model, kb
+                pinecone_index,
+                embedding_model, cross_encoder_model, kb,
+                company_catalog_rich,
+                search_by_tags,
+                expand_search_terms
             )
+            all_sources_structured = sources # Atribui as fontes diretamente
 
             if not context:
                 st.error("❌ Não encontrei informações relevantes nos documentos para a sua consulta.")
