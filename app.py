@@ -904,25 +904,23 @@ def main():
             # --- FIM DA LÓGICA CORRIGIDA E FINAL ---
 
             # Rota 1: Análise Temática
-            if any(keyword in query_lower for keyword in thematic_keywords) and topics_to_search:
-                primary_topic = topics_to_search[0]
-                with st.spinner(f"Iniciando análise temática... Este processo é detalhado e pode levar alguns minutos."):
-                    st.write(f"**Tópico identificado para análise temática:** `{topics_to_search}`")
-                    final_report = analyze_topic_thematically(
-                        topic=topics_to_search[0], # Passa apenas o tópico principal
-                        query=user_query,
-                        summary_data=summary_data,
-                        pinecone_index=pinecone_index,
-                        embedding_model=embedding_model,
-                        cross_encoder_model=cross_encoder_model,
-                        kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                        company_catalog_rich=st.session_state.company_catalog_rich,
-                        company_lookup_map=st.session_state.company_lookup_map,
-                        execute_dynamic_plan_func=execute_dynamic_plan,
-                        get_final_unified_answer_func=get_final_unified_answer,
-                        filters=active_filters
-                    )
-                    st.markdown(final_report)
+            elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
+                with st.spinner(f"Buscando empresas nos dados de resumo..."):
+                    st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
+        
+                    all_found_companies = set()
+        
+                    for topic_item in topics_to_search:
+                        # --- CHAMADA ATUALIZADA ---
+                        # A busca agora é feita no summary_data, que é rápido e preciso.
+                        # Não precisamos mais de 'artifacts' ou do modelo de embedding aqui.
+                        companies = find_companies_by_topic(
+                            topic=topic_item,
+                            summary_data=summary_data, 
+                            kb=DICIONARIO_UNIFICADO_HIERARQUICO,
+                            filters=active_filters                            
+                        )
+                        all_found_companies.update(companies)
 
             # Rota 2: Listagem de Empresas
             elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
@@ -958,7 +956,7 @@ def main():
                     companies_from_filter = set()
                     
                     # --- LÓGICA ATUALIZADA ---
-                    # Itera sobre o 'summary_data', que é a fonte de dados correta e eficiente para esta consulta.
+                    # Itera sobre o 'summary_data' em vez dos 'artifacts'. É muito mais rápido.
                     for company_name, company_data in summary_data.items():
                         # Valida filtro de setor
                         setor_metadata = company_data.get('setor', '')
@@ -972,7 +970,8 @@ def main():
                         
                         if setor_match and controle_match:
                             companies_from_filter.add(company_name)
-                    
+                    # --- FIM DA LÓGICA ATUALIZADA ---
+                            
                     if companies_from_filter:
                         sorted_companies = sorted(list(companies_from_filter))
                         final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os filtros selecionados:\n"
