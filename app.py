@@ -287,80 +287,68 @@ def get_query_intent_with_llm(query: str) -> str:
 def execute_dynamic_plan(
     query: str,
     plan: dict,
-    pinecone_index: Pinecone.Index, # << PARÂMETRO NOVO E PRINCIPAL
+    pinecone_index: Pinecone.Index,
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
-    # Os parâmetros abaixo são REMOVIDOS, pois suas funções agora são executadas pelo Pinecone:
-    # artifacts, company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms
+    # Os parâmetros extras da versão antiga já foram removidos na refatoração anterior
 ) -> tuple[str, list[dict]]:
     """
-    Versão Refatorada: Executa o plano de busca consultando o índice vetorial
-    do Pinecone. Preserva 100% da robustez da lógica de re-ranking e construção de contexto.
+    Versão Final e Refatorada: Executa o plano de busca via Pinecone,
+    re-ranqueia os resultados e constrói o contexto final.
     """
     logger.info(f"Executando plano de busca via Pinecone para query: '{query}'")
     
-    # --- ETAPA 1: PREPARAR A CONSULTA (Substitui a lógica de pré-filtragem e roteamento) ---
-    
+    # --- ETAPA 1: PREPARAR A CONSULTA ---
     topicos = plan.get("topicos", [])
     empresas = plan.get("empresas", [])
     filtros = plan.get("filtros", {})
     
-    TOP_K_INITIAL_RETRIEVAL = 50 # Buscar 50 candidatos para garantir uma boa base para o re-ranking
+    TOP_K_INITIAL_RETRIEVAL = 50
     TOP_K_FINAL = 10
 
-    # LÓGICA PRESERVADA: Cria uma query semântica rica para a busca vetorial.
     semantic_query = f"informações detalhadas sobre {', '.join(topicos)} para as empresas {', '.join(empresas)}"
-    if not topicos and not empresas: # Fallback para buscas mais genéricas, como na lógica original.
+    if not topicos and not empresas:
         semantic_query = query
         
     query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
 
-    # LÓGICA MELHORADA: Constrói um filtro de metadados para a API do Pinecone.
-    # Isso substitui a filtragem manual e ineficiente em Python, sendo muito mais rápido e escalável.
     pinecone_filter = {}
     if filtros.get('setor'):
         pinecone_filter['setor'] = filtros['setor'].capitalize()
     if filtros.get('controle_acionario'):
         pinecone_filter['controle_acionario'] = filtros['controle_acionario'].capitalize()
     if empresas:
-        # O filtro "$in" substitui a necessidade de iterar e filtrar por empresa manualmente.
         pinecone_filter['company_name'] = {"$in": empresas}
 
     logger.info(f"Consultando Pinecone com o seguinte filtro de metadados: {pinecone_filter}")
 
-    # --- ETAPA 2: EXECUTAR A BUSCA (Substitui a criação de índices FAISS temporários) ---
-    
+    # --- ETAPA 2: EXECUTAR A BUSCA ---
     try:
-        # A busca pesada (que antes travava o app) é feita aqui, no servidor do Pinecone.
         results = pinecone_index.query(
             vector=query_embedding,
             top_k=TOP_K_INITIAL_RETRIEVAL,
             filter=pinecone_filter if pinecone_filter else None,
             include_metadata=True
         )
-        # O resultado já vem com todos os metadados (texto, url, etc.) de cada chunk.
+        # O resultado da busca agora é uma lista limpa chamada 'candidate_chunks'
         candidate_chunks = [match['metadata'] for match in results.get('matches', [])]
     except Exception as e:
         logger.error(f"Erro ao consultar o Pinecone: {e}")
         st.error(f"Ocorreu um erro ao buscar na base de conhecimento. Detalhes: {e}")
         return "", []
     
+    # --- ETAPA 3: RE-RANKING (COM A VERIFICAÇÃO CORRIGIDA) ---
+    
+    # CORREÇÃO: A verificação agora é feita na lista 'candidate_chunks'
     if not candidate_chunks:
-        logger.warning(f"Nenhum chunk encontrado no Pinecone para a query: '{query}' com os filtros: {pinecone_filter}")
-        return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
-
-   # --- ESTÁGIO 3: RE-RANKING FINAL ---
-    if not candidate_chunks_dict:
         logger.warning(f"Nenhum chunk candidato encontrado para a query: '{query}' com os filtros aplicados.")
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
     
-    candidate_list = list(candidate_chunks_dict.values())
-    logger.info(f"Total de {len(candidate_list)} chunks candidatos únicos encontrados. Re-ranqueando...")
+    logger.info(f"Total de {len(candidate_chunks)} chunks candidatos únicos encontrados. Re-ranqueando...")
+    reranked_chunks = rerank_with_cross_encoder(query, candidate_chunks, cross_encoder_model, top_n=TOP_K_FINAL)
     
-    reranked_chunks = rerank_with_cross_encoder(query, candidate_list, cross_encoder_model, top_n=TOP_K_FINAL)
-    
-    # Construção do Contexto Final
+    # --- ETAPA 4: CONSTRUÇÃO DO CONTEXTO FINAL (Sem alterações) ---
     full_context = ""
     retrieved_sources = []
     seen_sources = set()
@@ -369,8 +357,8 @@ def execute_dynamic_plan(
         company_name = chunk.get('company_name', 'N/A')
         source_url = chunk.get('source_url', 'N/A')
         
-        source_header = f"(Empresa: {company_name}, Setor: {chunk.get('setor', 'N/A')}, Documento: {chunk.get('doc_type', 'N/A')})"
-        clean_text = re.sub(r'\[.*?\]', '', chunk.get('text', '')).strip()
+        source_header = f"(Empresa: {company_name}, Setor: {chunk.get('setor', 'N/A')})"
+        clean_text = chunk.get('text', '').strip()
         full_context += f"--- CONTEÚDO RELEVANTE {source_header} ---\n{clean_text}\n\n"
         
         source_tuple = (company_name, source_url)
