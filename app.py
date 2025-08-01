@@ -968,29 +968,22 @@ def main():
                     st.write("Nenhum tópico técnico identificado. Listando todas as empresas que correspondem aos filtros.")
                     
                     companies_from_filter = set()
-                    # Itera em todos os documentos para encontrar empresas que correspondem ao filtro
-                    for artifact_data in artifacts.values():
-        # Acessa diretamente a lista de chunks, que contém os metadados.
-                        list_of_chunks = artifact_data.get('chunks', [])
-
-                        if not isinstance(list_of_chunks, list):
-                            continue
-
-                        for metadata in list_of_chunks:
-                            # --- INÍCIO DA CORREÇÃO ---
-                            setor_metadata = metadata.get('setor', '')
-                            controle_metadata = metadata.get('controle_acionario', '')
-
-                            setor_match = (not active_filters.get('setor') or 
-                                           (isinstance(setor_metadata, str) and setor_metadata.lower() == active_filters['setor']))
+                    
+                    # --- LÓGICA ATUALIZADA ---
+                    # Itera sobre o 'summary_data', que é a fonte de dados correta e eficiente para esta consulta.
+                    for company_name, company_data in summary_data.items():
+                        # Valida filtro de setor
+                        setor_metadata = company_data.get('setor', '')
+                        setor_match = (not active_filters.get('setor') or 
+                                       (isinstance(setor_metadata, str) and setor_metadata.lower() == active_filters['setor']))
                         
-                            controle_match = (not active_filters.get('controle_acionario') or 
-                                              (isinstance(controle_metadata, str) and controle_metadata.lower() == active_filters['controle_acionario']))
-                            # --- FIM DA CORREÇÃO ---
-                            if setor_match and controle_match:
-                                company_name = metadata.get('company_name')
-                                if company_name:
-                                    companies_from_filter.add(company_name)
+                        # Valida filtro de controle
+                        controle_metadata = company_data.get('controle_acionario', '')
+                        controle_match = (not active_filters.get('controle_acionario') or 
+                                          (isinstance(controle_metadata, str) and controle_metadata.lower() == active_filters['controle_acionario']))
+                        
+                        if setor_match and controle_match:
+                            companies_from_filter.add(company_name)
                     
                     if companies_from_filter:
                         sorted_companies = sorted(list(companies_from_filter))
