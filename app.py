@@ -28,7 +28,8 @@ from tools import (
     get_summary_for_topic_at_company,
     rerank_with_cross_encoder,
     rerank_by_recency,
-    create_hierarchical_alias_map
+    create_hierarchical_alias_map,
+    _create_company_lookup_map
     )
 logger = logging.getLogger(__name__)
 
