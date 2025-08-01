@@ -1,0 +1,23 @@
+steps:
+  # Passo 1: Construir a imagem Docker
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/streamlit-app', '.']
+
+  # Passo 2: Enviar a imagem para o Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/streamlit-app']
+
+  # Passo 3: Implantar a imagem no Cloud Run
+  - name: 'gcr.io/google.com/cloudsdk/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'streamlit-app'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/streamlit-app'
+      - '--region'
+      - 'us-central1' # Substitua pela sua região de preferência
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
