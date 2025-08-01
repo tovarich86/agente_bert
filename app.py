@@ -291,7 +291,7 @@ def get_query_intent_with_llm(query: str) -> str:
 def execute_dynamic_plan(
     query: str,
     plan: dict,
-    pinecone_index: Pinecone.Index,
+    pinecone_index, # pinecone.Index
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
@@ -300,142 +300,153 @@ def execute_dynamic_plan(
     expand_search_terms: callable,
 ) -> tuple[str, list[dict]]:
     """
-    Versão 5.1 (Estratégia Híbrida Corrigida) do Executor de Planos para Pinecone.
-    Esta versão corrige a estratégia de busca combinando:
-    1. Uma query vetorial ESPECÍFICA que inclui o nome da empresa e o tópico.
-    2. Um filtro de metadados RESTRITO que garante a busca apenas nos documentos da empresa correta.
-    Isso une o melhor das duas abordagens, replicando a eficácia da versão FAISS.
+    Versão 6.1 (Completa e com Debug Avançado) - Estratégia "Retrieve then Filter".
+    - Adiciona um expander de debug para visualizar os resultados brutos do Pinecone
+      e o processo de filtragem em Python.
+    - Realiza uma busca vetorial ampla, sem filtro de empresa.
+    - Filtra os resultados em Python com lógica flexível, emulando o comportamento original do FAISS.
     """
-    logger.info(f"Executando plano v5.1 (Híbrido Corrigido) para query: '{query}'")
+    logger.info(f"Executando plano v6.1 (Com Debug) para query: '{query}'")
 
-    # --- ETAPA 1: CONFIGURAÇÃO ---
-    plan_type = plan.get("plan_type", "default")
-    empresas = plan.get("empresas", [])
-    topicos = plan.get("topicos", [])
-    filtros = plan.get("filtros", {})
+    # =============================================================================== #
+    # ===================== INÍCIO DO BLOCO DE DEBUG INTEGRADO ====================== #
+    # =============================================================================== #
+    with st.expander("🕵️‍♂️ DEBUG: Detalhes da Execução do Plano (v6.1)", expanded=True):
+        st.write("---")
+        st.subheader("1. Análise da Busca Vetorial Ampla (Antes do Filtro)")
 
-    TOP_K_INITIAL_RETRIEVAL = 75
-    TOP_K_FINAL = 10
-    candidate_chunks_dict = {}
+        # --- ETAPA DE BUSCA (código original, mas com captura de resultados para debug) ---
+        empresas = plan.get("empresas", [])
+        topicos = plan.get("topicos", [])
+        filtros = plan.get("filtros", {})
+        TOP_K_INITIAL_RETRIEVAL = 100
 
-    def add_candidate(chunk_info):
-        chunk_id = chunk_info.get('id', hash(chunk_info.get("text", "")))
-        if chunk_id not in candidate_chunks_dict:
-            candidate_chunks_dict[chunk_id] = chunk_info
+        pinecone_filter = {}
+        if filtros.get('setor'):
+            pinecone_filter['setor'] = filtros['setor'].capitalize()
+        if filtros.get('controle_acionario'):
+            pinecone_filter['controle_acionario'] = filtros['controle_acionario'].capitalize()
 
-    # --- ETAPA 2: CONSTRUÇÃO DO FILTRO DE METADADOS ---
-    pinecone_filter = {}
-    if filtros.get('setor'):
-        pinecone_filter['setor'] = filtros['setor'].capitalize()
-    if filtros.get('controle_acionario'):
-        pinecone_filter['controle_acionario'] = filtros['controle_acionario'].capitalize()
-    
-    # Esta parte é crucial: o filtro de metadados age como uma barreira de segurança.
-    if empresas:
-        # A função é chamada uma vez por empresa no modo de comparação,
-        # então 'empresas' terá um único nome canônico.
-        company_canonical_name = empresas[0]
-        all_company_names_to_search = {company_canonical_name}
-        for company_data in company_catalog_rich:
-            if company_data.get("canonical_name") == company_canonical_name:
-                all_company_names_to_search.update(company_data.get("aliases", []))
-                break
-        pinecone_filter['company_name'] = {"$in": list(all_company_names_to_search)}
+        search_queries = []
+        company_name_for_query = empresas[0] if empresas else ""
+        if topicos:
+            for topico in topicos:
+                search_queries.append(f"informações detalhadas sobre {topico} no plano da empresa {company_name_for_query}")
+        else:
+            search_queries.append(query)
 
-    # --- ETAPA 3: BUSCA VETORIAL COM QUERY ESPECÍFICA (LÓGICA CORRIGIDA) ---
-    search_queries = []
-    # Como a função roda para uma empresa por vez, pegamos o nome dela para a query.
-    company_name_for_query = empresas[0] if empresas else ""
+        all_retrieved_matches = []
+        st.write(f"**Query Semântica Enviada ao Pinecone:** `{search_queries[0]}`")
+        st.write(f"**Filtro de Metadados Base (sem empresa):** `{pinecone_filter or 'Nenhum'}`")
 
-    if topicos:
-        for topico in topicos:
-            # Recriamos a query específica, que provou ser eficaz na versão FAISS.
-            specific_query = f"informações detalhadas sobre {topico} no plano da empresa {company_name_for_query}"
-            search_queries.append(specific_query)
-    else:
-        # Mantém o fallback para a query original do usuário se não houver tópicos.
-        search_queries.append(query)
-
-    logger.info(f"Executando {len(search_queries)} buscas vetoriais com queries específicas. Filtro de metadados aplicado: {pinecone_filter}")
-
-    for semantic_query in search_queries:
-        query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
+        query_embedding = model.encode(search_queries[0], normalize_embeddings=True).tolist()
         try:
-            # A query agora é específica E o filtro garante a busca no lugar certo.
             results = pinecone_index.query(
                 vector=query_embedding,
                 top_k=TOP_K_INITIAL_RETRIEVAL,
-                filter=pinecone_filter,
+                filter=pinecone_filter if pinecone_filter else None,
                 include_metadata=True
             )
-            for match in results.get('matches', []):
-                add_candidate(match['metadata'])
+            all_retrieved_matches.extend(results.get('matches', []))
+
+            st.success(f"Busca no Pinecone concluída. **{len(all_retrieved_matches)} candidatos recuperados.**")
+
+            # EXIBE OS TOP 5 RESULTADOS BRUTOS EM UM DATAFRAME
+            if all_retrieved_matches:
+                st.write("**Top 5 resultados brutos retornados pelo Pinecone:**")
+                debug_data = []
+                for match in all_retrieved_matches[:5]:
+                    metadata = match.get('metadata', {})
+                    debug_data.append({
+                        "Score": f"{match.get('score', 0):.4f}",
+                        "Company Name (metadata)": metadata.get('company_name'),
+                        "Document Type": metadata.get('doc_type'),
+                        "Text Snippet": metadata.get('text', '')[:150] + "..."
+                    })
+                st.dataframe(pd.DataFrame(debug_data), use_container_width=True)
+            else:
+                st.warning("A busca vetorial ampla no Pinecone não retornou nenhum resultado.")
+
         except Exception as e:
-            st.error(f"Ocorreu um erro ao buscar na base de conhecimento: {e}")
+            st.error(f"Ocorreu um erro na busca do Pinecone: {e}")
             return "", []
 
-    logger.info(f"Universo inicial construído com {len(candidate_chunks_dict)} chunks únicos.")
-    initial_candidates = list(candidate_chunks_dict.values())
+        # --- ETAPA DE FILTRO (com logging de debug) ---
+        st.write("---")
+        st.subheader("2. Análise do Filtro Flexível (Execução em Python)")
 
-    # --- ETAPA 4: BUSCA HÍBRIDA POR TAGS (se aplicável) ---
-    # (Esta parte pode ser mantida como está, pois atua sobre os candidatos já recuperados)
+        candidate_chunks_dict = {}
+        def add_candidate(chunk_info):
+            chunk_id = chunk_info.get('id', hash(chunk_info.get("text", "")))
+            if chunk_id not in candidate_chunks_dict:
+                candidate_chunks_dict[chunk_id] = chunk_info
+
+        company_lookup_map = _create_company_lookup_map(company_catalog_rich)
+
+        st.write(f"**Empresas a serem filtradas:** `{empresas}`")
+        # Log detalhado do processo de filtragem
+        for i, match in enumerate(all_retrieved_matches):
+            chunk_metadata = match.get('metadata', {})
+            metadata_company_name = chunk_metadata.get('company_name', 'N/A').lower()
+
+            # Loga a verificação apenas para os 10 primeiros para não poluir a tela
+            if i < 10:
+                st.write(f"  - Verificando Candidato #{i+1} | Nome no Metadado: `{metadata_company_name}`")
+
+            for plan_company_canonical in empresas:
+                chunk_canonical_name = company_lookup_map.get(metadata_company_name)
+
+                match_found = False
+                reason = ""
+                if chunk_canonical_name and chunk_canonical_name.lower() == plan_company_canonical.lower():
+                    match_found = True
+                    reason = f"Correspondência canônica exata."
+                elif plan_company_canonical.lower() in metadata_company_name:
+                    match_found = True
+                    reason = f"Nome do plano ('{plan_company_canonical.lower()}') contido no nome do metadado."
+
+                if match_found:
+                    add_candidate(chunk_metadata)
+                    if i < 10:
+                        st.success(f"    ✅ **Aceito!** Razão: {reason}")
+                    break # Para de verificar outras empresas
+    # ============================================================================= #
+    # ========================== FIM DO BLOCO DE DEBUG ============================ #
+    # ============================================================================= #
+
+    # O código principal continua a partir daqui, usando os resultados do debug
+    
+    logger.info(f"Universo inicial construído com {len(candidate_chunks_dict)} chunks únicos após o filtro em Python.")
+
+    initial_candidates = list(candidate_chunks_dict.values())
     if topicos:
         all_target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
         tag_search_candidates = search_by_tags(initial_candidates, list(all_target_tags))
         for chunk in tag_search_candidates:
             add_candidate(chunk)
-    
+
     candidate_list = list(candidate_chunks_dict.values())
     if not candidate_list:
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
-    # --- ETAPA 5 E 6: RECÊNCIA, RE-RANKING E CONSTRUÇÃO DE CONTEXTO ---
-    # (O restante da função pode ser mantido como está, pois já é robusto)
-    
-    # A lógica de recência pode ser simplificada, mas a original funciona.
-    final_candidate_list = []
-    if empresas:
-        docs_by_url = defaultdict(list)
-        for chunk in candidate_list:
-            docs_by_url[chunk.get('source_url')].append(chunk)
-
-        MAX_DOCS_PER_COMPANY = 2 # Limita a 2 documentos mais recentes por empresa
-        if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
-            def get_sort_key(url):
-                chunks_for_url = docs_by_url.get(url, [])
-                if not chunks_for_url: return datetime.min
-                date_str = chunks_for_url[0].get("document_date")
-                if date_str and date_str != "N/A":
-                    try: return datetime.fromisoformat(date_str)
-                    except (ValueError, TypeError): return datetime.min
-                return datetime.min
-
-            sorted_urls = sorted(docs_by_url.keys(), key=get_sort_key, reverse=True)
-            latest_urls = sorted_urls[:MAX_DOCS_PER_COMPANY]
-            for url in latest_urls:
-                final_candidate_list.extend(docs_by_url[url])
-        else:
-            final_candidate_list.extend(candidate_list)
-    else:
-        final_candidate_list = candidate_list
+    final_candidate_list = rerank_by_recency(candidate_list) if empresas else candidate_list
 
     logger.info(f"Após filtro de recência, {len(final_candidate_list)} chunks foram selecionados para re-ranqueamento.")
     if not final_candidate_list:
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
-    reranked_chunks = rerank_with_cross_encoder(query, final_candidate_list, cross_encoder_model, top_n=TOP_K_FINAL)
+    reranked_chunks = rerank_with_cross_encoder(query, final_candidate_list, cross_encoder_model, top_n=10)
 
-    full_context = ""
-    retrieved_sources = []
+    full_context, retrieved_sources = "", []
     seen_sources = set()
     for chunk in reranked_chunks:
         company_name = chunk.get('company_name', 'N/A')
         source_url = chunk.get('source_url', 'N/A')
-        
+
         source_header = f"(Empresa: {company_name}, Setor: {chunk.get('setor', 'N/A')}, Documento: {chunk.get('doc_type', 'N/A')})"
         clean_text = chunk.get('text', '').strip()
         full_context += f"--- CONTEÚDO RELEVANTE {source_header} ---\n{clean_text}\n\n"
-        
+
         source_tuple = (company_name, source_url)
         if source_tuple not in seen_sources:
             seen_sources.add(source_tuple)
