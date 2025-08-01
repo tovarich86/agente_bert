@@ -834,218 +834,175 @@ def main():
         """)
 
     user_query = st.text_area("Sua pergunta:", height=100, placeholder="Ex: Quais são os modelos típicos de vesting? ou Como funciona o plano da Vale?")
-    
-    if st.button("🔍 Analisar", type="primary", use_container_width=True):
-        if not user_query.strip():
-            st.warning("⚠️ Por favor, digite uma pergunta.")
-            st.stop()
-        active_filters = {}
-        if selected_setor != "Todos":
-            active_filters['setor'] = selected_setor.lower()
-        if selected_controle != "Todos":
-            # A chave 'controle_acionario' deve ser exatamente como nos metadados dos chunks.
-            active_filters['controle_acionario'] = selected_controle.lower()
-        if active_filters:
-            # Formata o dicionário para uma exibição amigável.
-            filter_text_parts = []
-            if 'setor' in active_filters:
-                filter_text_parts.append(f"**Setor**: {active_filters['setor'].capitalize()}")
-            if 'controle_acionario' in active_filters:
-                filter_text_parts.append(f"**Controle**: {active_filters['controle_acionario'].capitalize()}")
 
-            filter_text = " e ".join(filter_text_parts)
-            st.info(f"🔎 Análise sendo executada com os seguintes filtros: {filter_text}")
+if st.button("🔍 Analisar", type="primary", use_container_width=True):
+    if not user_query.strip():
+        st.warning("⚠️ Por favor, digite uma pergunta.")
+        st.stop()
+    active_filters = {}
+    if selected_setor != "Todos":
+        active_filters['setor'] = selected_setor.lower()
+    if selected_controle != "Todos":
+        active_filters['controle_acionario'] = selected_controle.lower()
+    if active_filters:
+        filter_text_parts = []
+        if 'setor' in active_filters:
+            filter_text_parts.append(f"**Setor**: {active_filters['setor'].capitalize()}")
+        if 'controle_acionario' in active_filters:
+            filter_text_parts.append(f"**Controle**: {active_filters['controle_acionario'].capitalize()}")
+        filter_text = " e ".join(filter_text_parts)
+        st.info(f"🔎 Análise sendo executada com os seguintes filtros: {filter_text}")
 
-        st.markdown("---")
-        st.subheader("📋 Resultado da Análise")
-                # --- INÍCIO DA NOVA LÓGICA DE ROTEAMENTO HÍBRIDO ---
-        
-        intent = None
-        query_lower = user_query.lower()
-        
-        # 1. Camada de Regras: Verifica palavras-chave quantitativas óbvias primeiro.
-        quantitative_keywords = [
-            'liste', 'quais empresas', 'quais companhias', 'quantas', 'média', 
-            'mediana', 'estatísticas', 'mais comuns', 'prevalência', 'contagem'
-        ]
-        
-        if any(keyword in query_lower for keyword in quantitative_keywords):
-            intent = "quantitativa"
-            logger.info("Intenção 'quantitativa' detectada por regras de palavras-chave.")
-        
-        # 2. Camada de LLM: Se nenhuma regra correspondeu, consulta o LLM.
-        if intent is None:
-            with st.spinner("Analisando a intenção da sua pergunta..."):
-                intent = get_query_intent_with_llm(user_query)
+    st.markdown("---")
+    st.subheader("📋 Resultado da Análise")
+    # --- INÍCIO DA NOVA LÓGICA DE ROTEAMENTO HÍBRIDO ---
 
-        # --- FIM DA NOVA LÓGICA DE ROTEAMENTO HÍBRIDO ---
+    intent = None
+    query_lower = user_query.lower()
 
-        if intent == "quantitativa":
-            query_lower = user_query.lower()
-            listing_keywords = ["quais empresas", "liste as empresas", "quais companhias"]
-            thematic_keywords = ["modelos típicos", "padrões comuns", "analise os planos", "formas mais comuns"]
-                # --- INÍCIO DA LÓGICA CORRIGIDA E FINAL ---
-            
-            # 1. Usa a nova função para criar o mapa hierárquico
-            alias_map = create_hierarchical_alias_map(DICIONARIO_UNIFICADO_HIERARQUICO)
-            found_topics = set()
-            
-            # 2. Itera nos aliases para encontrar os tópicos mencionados na query
-            for alias in sorted(alias_map.keys(), key=len, reverse=True):
-                if re.search(r'\b' + re.escape(alias) + r'\b', query_lower):
-                    full_path = alias_map[alias]
-                    topic_leaf = full_path.split(',')[-1].replace('_', ' ')
-                    found_topics.add(topic_leaf)
-            
-            topics_to_search = list(found_topics)
-            # Remove palavras-chave genéricas da lista de tópicos
-            topics_to_search = [t for t in topics_to_search if t.lower() not in listing_keywords and t.lower() not in thematic_keywords]
+    # 1. Camada de Regras
+    quantitative_keywords = [
+        'liste', 'quais empresas', 'quais companhias', 'quantas', 'média', 
+        'mediana', 'estatísticas', 'mais comuns', 'prevalência', 'contagem'
+    ]
+    if any(keyword in query_lower for keyword in quantitative_keywords):
+        intent = "quantitativa"
+        logger.info("Intenção 'quantitativa' detectada por regras de palavras-chave.")
 
-            # --- FIM DA LÓGICA CORRIGIDA E FINAL ---
+    # 2. Camada de LLM
+    if intent is None:
+        with st.spinner("Analisando a intenção da sua pergunta..."):
+            intent = get_query_intent_with_llm(user_query)
 
-            # Rota 1: Análise Temática
-            elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
-                with st.spinner(f"Buscando empresas nos dados de resumo..."):
-                    st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
+    # --- FIM DA NOVA LÓGICA DE ROTEAMENTO HÍBRIDO ---
+
+    if intent == "quantitativa":
+        listing_keywords = ["quais empresas", "liste as empresas", "quais companhias"]
+        thematic_keywords = ["modelos típicos", "padrões comuns", "analise os planos", "formas mais comuns"]
         
-                    all_found_companies = set()
-        
-                    for topic_item in topics_to_search:
-                        # --- CHAMADA ATUALIZADA ---
-                        # A busca agora é feita no summary_data, que é rápido e preciso.
-                        # Não precisamos mais de 'artifacts' ou do modelo de embedding aqui.
-                        companies = find_companies_by_topic(
-                            topic=topic_item,
-                            summary_data=summary_data, 
-                            kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                            filters=active_filters                            
-                        )
-                        all_found_companies.update(companies)
+        alias_map = create_hierarchical_alias_map(DICIONARIO_UNIFICADO_HIERARQUICO)
+        found_topics = set()
+        for alias in sorted(alias_map.keys(), key=len, reverse=True):
+            if re.search(r'\b' + re.escape(alias) + r'\b', query_lower):
+                full_path = alias_map[alias]
+                topic_leaf = full_path.split(',')[-1].replace('_', ' ')
+                found_topics.add(topic_leaf)
 
-            # Rota 2: Listagem de Empresas
-            elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
-                with st.spinner(f"Usando ferramentas para encontrar empresas..."):
-                    st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
-        
-                    all_found_companies = set()
-        
-                    # CORREÇÃO: Itera sobre a lista e chama a ferramenta para CADA tópico.
-                    for topic_item in topics_to_search:
-                        companies = find_companies_by_topic(
-                            topic=topic_item,  # Passa um único tópico (string)
-                            summary_data=summary_data, 
-                            kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                            filters=active_filters                            
-                        )
-                        all_found_companies.update(companies)
+        topics_to_search = list(found_topics)
+        # Remove palavras-chave genéricas da lista de tópicos
+        topics_to_search = [t for t in topics_to_search if t.lower() not in listing_keywords and t.lower() not in thematic_keywords]
 
-                    if all_found_companies:
-                        sorted_companies = sorted(list(all_found_companies))
-                        final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os tópicos relacionados:\n"
-                        final_answer += "\n".join([f"- {company}" for company in sorted_companies])
-                    else:
-                        final_answer = "Nenhuma empresa encontrada nos documentos para os tópicos identificados."
-                
+        # Rota 1: Análise Temática
+        if any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
+            with st.spinner(f"Buscando empresas nos dados de resumo..."):
+                st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
+                all_found_companies = set()
+                for topic_item in topics_to_search:
+                    companies = find_companies_by_topic(
+                        topic=topic_item,
+                        summary_data=summary_data, 
+                        kb=DICIONARIO_UNIFICADO_HIERARQUICO,
+                        filters=active_filters                            
+                    )
+                    all_found_companies.update(companies)
+                # (Se precisar usar o resultado, coloque o código aqui.)
+
+        # Rota 2: Listagem de Empresas
+        elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
+            with st.spinner(f"Usando ferramentas para encontrar empresas..."):
+                st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
+                all_found_companies = set()
+                for topic_item in topics_to_search:
+                    companies = find_companies_by_topic(
+                        topic=topic_item,  
+                        summary_data=summary_data, 
+                        kb=DICIONARIO_UNIFICADO_HIERARQUICO,
+                        filters=active_filters                            
+                    )
+                    all_found_companies.update(companies)
+                if all_found_companies:
+                    sorted_companies = sorted(list(all_found_companies))
+                    final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os tópicos relacionados:\n"
+                    final_answer += "\n".join([f"- {company}" for company in sorted_companies])
+                else:
+                    final_answer = "Nenhuma empresa encontrada nos documentos para os tópicos identificados."
                 st.markdown(final_answer)
-                     # --- INÍCIO DA NOVA ROTA 2.5 ---
-            # Rota 2.5: Listagem de Empresas APENAS POR FILTRO
-            elif any(keyword in query_lower for keyword in listing_keywords) and active_filters and not topics_to_search:
-                with st.spinner("Listando empresas com base nos filtros selecionados..."):
-                    st.write("Nenhum tópico técnico identificado. Listando todas as empresas que correspondem aos filtros.")
-                    
-                    companies_from_filter = set()
-                    
-                    # --- LÓGICA ATUALIZADA ---
-                    # Itera sobre o 'summary_data' em vez dos 'artifacts'. É muito mais rápido.
-                    for company_name, company_data in summary_data.items():
-                        # Valida filtro de setor
-                        setor_metadata = company_data.get('setor', '')
-                        setor_match = (not active_filters.get('setor') or 
-                                       (isinstance(setor_metadata, str) and setor_metadata.lower() == active_filters['setor']))
-                        
-                        # Valida filtro de controle
-                        controle_metadata = company_data.get('controle_acionario', '')
-                        controle_match = (not active_filters.get('controle_acionario') or 
-                                          (isinstance(controle_metadata, str) and controle_metadata.lower() == active_filters['controle_acionario']))
-                        
-                        if setor_match and controle_match:
-                            companies_from_filter.add(company_name)
-                    # --- FIM DA LÓGICA ATUALIZADA ---
-                            
-                    if companies_from_filter:
-                        sorted_companies = sorted(list(companies_from_filter))
-                        final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os filtros selecionados:\n"
-                        final_answer += "\n".join([f"- {company}" for company in sorted_companies])
+
+        # Rota 2.5: Listagem de Empresas APENAS POR FILTRO
+        elif any(keyword in query_lower for keyword in listing_keywords) and active_filters and not topics_to_search:
+            with st.spinner("Listando empresas com base nos filtros selecionados..."):
+                st.write("Nenhum tópico técnico identificado. Listando todas as empresas que correspondem aos filtros.")
+                companies_from_filter = set()
+                for company_name, company_data in summary_data.items():
+                    setor_metadata = company_data.get('setor', '')
+                    setor_match = (not active_filters.get('setor') or 
+                                   (isinstance(setor_metadata, str) and setor_metadata.lower() == active_filters['setor']))
+                    controle_metadata = company_data.get('controle_acionario', '')
+                    controle_match = (not active_filters.get('controle_acionario') or 
+                                      (isinstance(controle_metadata, str) and controle_metadata.lower() == active_filters['controle_acionario']))
+                    if setor_match and controle_match:
+                        companies_from_filter.add(company_name)
+                if companies_from_filter:
+                    sorted_companies = sorted(list(companies_from_filter))
+                    final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os filtros selecionados:\n"
+                    final_answer += "\n".join([f"- {company}" for company in sorted_companies])
+                else:
+                    final_answer = "Nenhuma empresa foi encontrada para a combinação de filtros selecionada."
+                st.markdown(final_answer)
+
+        # Rota 3: Fallback para o AnalyticalEngine
+        else:
+            st.info("Intenção quantitativa detectada. Usando o motor de análise rápida...")
+            with st.spinner("Executando análise quantitativa rápida..."):
+                report_text, data_result = engine.answer_query(user_query, filters=active_filters)
+                if report_text: st.markdown(report_text)
+                if data_result is not None:
+                    if isinstance(data_result, pd.DataFrame):
+                        if not data_result.empty: st.dataframe(data_result, use_container_width=True, hide_index=True)
+                    elif isinstance(data_result, dict):
+                        for df_name, df_content in data_result.items():
+                            if df_content is not None and not df_content.empty:
+                                st.markdown(f"#### {df_name}")
+                                st.dataframe(df_content, use_container_width=True, hide_index=True)
+                else: 
+                    st.info("Nenhuma análise tabular foi gerada para a sua pergunta ou dados insuficientes.")
+
+    else: # intent == 'qualitativa'
+        final_answer, sources = handle_rag_query(
+            user_query,
+            pinecone_index,
+            embedding_model,
+            cross_encoder_model,
+            kb=DICIONARIO_UNIFICADO_HIERARQUICO,
+            company_catalog_rich=st.session_state.company_catalog_rich,
+            company_lookup_map=st.session_state.company_lookup_map,
+            summary_data=summary_data,
+            filters=active_filters
+        )
+        st.markdown(final_answer)
+        if sources:
+            with st.expander(f"📚 Documentos consultados ({len(sources)})", expanded=True):
+                st.caption("Nota: Links diretos para a CVM podem falhar. Use a busca no portal com o protocolo como plano B.")
+                for src in sorted(sources, key=lambda x: x.get('company_name', '')):
+                    company_name = src.get('company_name', 'N/A')
+                    doc_date = src.get('document_date', 'N/A') 
+                    doc_type_raw = src.get('doc_type', '')
+                    url = src.get('source_url', '')
+                    if doc_type_raw == 'outros_documentos':
+                        display_doc_type = 'Plano de Remuneração'
                     else:
-                        final_answer = "Nenhuma empresa foi encontrada para a combinação de filtros selecionada."
-                    
-                    st.markdown(final_answer)
-
-            # Rota 3: Fallback para o AnalyticalEngine
-            else:
-                st.info("Intenção quantitativa detectada. Usando o motor de análise rápida...")
-                with st.spinner("Executando análise quantitativa rápida..."):
-                    report_text, data_result = engine.answer_query(user_query, filters=active_filters)
-                    if report_text: st.markdown(report_text)
-                    if data_result is not None:
-                        if isinstance(data_result, pd.DataFrame):
-                            if not data_result.empty: st.dataframe(data_result, use_container_width=True, hide_index=True)
-                        elif isinstance(data_result, dict):
-                            for df_name, df_content in data_result.items():
-                                if df_content is not None and not df_content.empty:
-                                    st.markdown(f"#### {df_name}")
-                                    st.dataframe(df_content, use_container_width=True, hide_index=True)
-                    else: 
-                        st.info("Nenhuma análise tabular foi gerada para a sua pergunta ou dados insuficientes.")
-        
-        else: # intent == 'qualitativa'
-            final_answer, sources = handle_rag_query(
-                user_query,
-                pinecone_index,
-                embedding_model,
-                cross_encoder_model,
-                kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                company_catalog_rich=st.session_state.company_catalog_rich,
-                company_lookup_map=st.session_state.company_lookup_map,
-                summary_data=summary_data,
-                filters=active_filters
-            )
-            st.markdown(final_answer)
-            
-            if sources:
-                with st.expander(f"📚 Documentos consultados ({len(sources)})", expanded=True):
-                    st.caption("Nota: Links diretos para a CVM podem falhar. Use a busca no portal com o protocolo como plano B.")
-        
-        # --- BLOCO CORRIGIDO ---
-                    for src in sorted(sources, key=lambda x: x.get('company_name', '')):
-                        company_name = src.get('company_name', 'N/A')
-                        doc_date = src.get('document_date', 'N/A') 
-                        doc_type_raw = src.get('doc_type', '')
-                        url = src.get('source_url', '')
-
-                        if doc_type_raw == 'outros_documentos':
-                            display_doc_type = 'Plano de Remuneração'
-                        else:
-                            display_doc_type = doc_type_raw.replace('_', ' ')
-            
-                        display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)"
-            
-                        # A lógica de exibição agora está corretamente separada por tipo de documento
-                        if "frmExibirArquivoIPEExterno" in url:
-                            # O protocolo SÓ é definido e usado dentro deste bloco
-                            protocolo_match = re.search(r'NumeroProtocoloEntrega=(\d+)', url)
-                            protocolo = protocolo_match.group(1) if protocolo_match else "N/A"
-                            st.markdown(f"**{display_text}** (Protocolo: **{protocolo}**)")
-                            st.markdown(f"↳ [Link Direto para Plano de ILP]({url}) ", unsafe_allow_html=True)
-            
-                        elif "frmExibirArquivoFRE" in url:
-                            # Este bloco não usa a variável 'protocolo'
-                            st.markdown(f"**{display_text}**")
-                            st.markdown(f"↳ [Link Direto para Formulário de Referência]({url})", unsafe_allow_html=True)
-            
-                        else:
-                            # Este bloco também não usa a variável 'protocolo'
-                            st.markdown(f"**{display_text}**: [Link]({url})")
+                        display_doc_type = doc_type_raw.replace('_', ' ')
+                    display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)"
+                    if "frmExibirArquivoIPEExterno" in url:
+                        protocolo_match = re.search(r'NumeroProtocoloEntrega=(\d+)', url)
+                        protocolo = protocolo_match.group(1) if protocolo_match else "N/A"
+                        st.markdown(f"**{display_text}** (Protocolo: **{protocolo}**)")
+                        st.markdown(f"↳ [Link Direto para Plano de ILP]({url}) ", unsafe_allow_html=True)
+                    elif "frmExibirArquivoFRE" in url:
+                        st.markdown(f"**{display_text}**")
+                        st.markdown(f"↳ [Link Direto para Formulário de Referência]({url})", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"**{display_text}**: [Link]({url})")
 
 
 if __name__ == "__main__":
