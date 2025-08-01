@@ -47,7 +47,7 @@ import numpy as np
 MODEL_NAME = 'neuralmind/bert-base-portuguese-cased'
 TOP_K_SEARCH = 7
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-1.5-flash-latest" # Usando o modelo mais recente e eficiente
+GEMINI_MODEL = "gemini-2.0-flash-lite" # Usando o modelo mais recente e eficiente
 CVM_SEARCH_URL = "https://www.rad.cvm.gov.br/ENET/frmConsultaExternaCVM.aspx"
 
 # Define o nome do índice Pinecone e o arquivo de resumo
