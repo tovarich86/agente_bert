@@ -742,8 +742,20 @@ def main():
 
     with st.sidebar:
         st.header("📊 Informações do Sistema")
-        st.metric("Categorias de Documentos (RAG)", len(artifacts))
-        st.metric("Empresas no Resumo", len(summary_data))
+        
+        # --- LÓGICA DA MÉTRICA ATUALIZADA ---
+        # Tenta buscar as estatísticas do índice Pinecone para uma métrica mais relevante.
+        try:
+            index_stats = pinecone_index.describe_index_stats()
+            # O total_vector_count é o número total de chunks que você indexou.
+            st.metric("Documentos na Base de Conhecimento (RAG)", f"{index_stats.get('total_vector_count', 0):,}")
+        except Exception as e:
+            # Fallback caso a API de stats falhe, para não quebrar o app.
+            logger.error(f"Não foi possível obter estatísticas do Pinecone: {e}")
+            st.metric("Status da Base de Conhecimento", "Conectado")
+        # --- FIM DA ATUALIZAÇÃO ---
+
+        st.metric("Empresas no Resumo (Análise Rápida)", len(summary_data))
                 # --- MODIFICAÇÃO 2: Usar as listas dinâmicas ---
         st.header("⚙️ Filtros da Análise")
         st.caption("Filtre a base de dados antes de fazer sua pergunta.")
@@ -909,9 +921,18 @@ def main():
                 with st.spinner(f"Iniciando análise temática... Este processo é detalhado e pode levar alguns minutos."):
                     st.write(f"**Tópico identificado para análise temática:** `{topics_to_search}`")
                     final_report = analyze_topic_thematically(
-                        topic=topics_to_search, query=user_query, artifacts=artifacts, model=embedding_model, kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                        execute_dynamic_plan_func=execute_dynamic_plan, get_final_unified_answer_func=get_final_unified_answer,filters=active_filters,
-                        company_catalog_rich=st.session_state.company_catalog_rich, company_lookup_map=st.session_state.company_lookup_map,
+                        topic=topics_to_search[0], # Passa apenas o tópico principal
+                        query=user_query,
+                        summary_data=summary_data,
+                        pinecone_index=pinecone_index,
+                        embedding_model=embedding_model,
+                        cross_encoder_model=cross_encoder_model,
+                        kb=DICIONARIO_UNIFICADO_HIERARQUICO,
+                        company_catalog_rich=st.session_state.company_catalog_rich,
+                        company_lookup_map=st.session_state.company_lookup_map,
+                        execute_dynamic_plan_func=execute_dynamic_plan,
+                        get_final_unified_answer_func=get_final_unified_answer,
+                        filters=active_filters
                     )
                     st.markdown(final_report)
 
