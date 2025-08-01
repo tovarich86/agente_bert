@@ -300,12 +300,13 @@ def execute_dynamic_plan(
     expand_search_terms: callable,
 ) -> tuple[str, list[dict]]:
     """
-    Versão 4.0 (Estratégia Corrigida) do Executor de Planos para Pinecone.
-    Esta versão corrige a estratégia de busca para emular a robustez da original:
-    1.  Realiza múltiplas buscas vetoriais para criar um "universo" amplo de candidatos.
-    2.  Aplica as lógicas de busca por tags e recência sobre este universo expandido.
+    Versão 5.0 (Estratégia Definitiva) do Executor de Planos para Pinecone.
+    Esta versão implementa a busca desacoplada:
+    1. A busca vetorial foca exclusivamente no conceito do TÓPICO.
+    2. A filtragem por EMPRESA é feita puramente via metadados.
+    Isso emula perfeitamente a robustez da estratégia original com FAISS.
     """
-    logger.info(f"Executando plano v4.0 (Estratégia Corrigida) para query: '{query}'")
+    logger.info(f"Executando plano v5.0 (Estratégia Definitiva) para query: '{query}'")
 
     # --- ETAPA 1: CONFIGURAÇÃO (Sem alterações) ---
     plan_type = plan.get("plan_type", "default")
@@ -313,11 +314,11 @@ def execute_dynamic_plan(
     topicos = plan.get("topicos", [])
     filtros = plan.get("filtros", {})
 
-    TOP_K_INITIAL_RETRIEVAL = 50 # Resultados por query, o total será maior
+    TOP_K_INITIAL_RETRIEVAL = 75 # Aumentado para garantir um universo amplo
     TOP_K_FINAL = 10
     candidate_chunks_dict = {}
 
-    # --- ETAPA 2: CONSTRUÇÃO DO FILTRO (Sem alterações) ---
+    # --- ETAPA 2: CONSTRUÇÃO DO FILTRO DE METADADOS (Sem alterações) ---
     pinecone_filter = {}
     if filtros.get('setor'):
         pinecone_filter['setor'] = filtros['setor'].capitalize()
@@ -334,38 +335,35 @@ def execute_dynamic_plan(
                     break
         pinecone_filter['company_name'] = {"$in": list(all_company_names_to_search)}
 
-    # --- INÍCIO DA MUDANÇA DE ESTRATÉGIA ---
-    # ETAPA 3: MÚLTIPLAS BUSCAS VETORIAIS PARA CRIAR UM UNIVERSO AMPLO
+    # --- INÍCIO DA CORREÇÃO DE ESTRATÉGIA ---
+    # ETAPA 3: BUSCA VETORIAL FOCADA APENAS NO TÓPICO
     
-    # Função auxiliar para adicionar candidatos ao dicionário e evitar duplicatas
     def add_candidate(chunk_info):
         chunk_id = chunk_info.get('id', hash(chunk_info.get("text", "")))
         if chunk_id not in candidate_chunks_dict:
             candidate_chunks_dict[chunk_id] = chunk_info
 
-    # Lista de queries a serem executadas
+    # As queries semânticas agora são puramente conceituais, sobre os tópicos.
     search_queries = []
     if topicos:
-        # Cria queries específicas para cada tópico
         for topico in topicos:
             expanded_terms = expand_search_terms(topico, kb)
-            base_query = f"detalhes sobre {expanded_terms[0]}"
-            if empresas:
-                base_query += f" no plano da empresa {empresas[0]}"
-            search_queries.append(base_query)
+            # A query agora é genérica, o nome da empresa NÃO está mais aqui.
+            conceptual_query = f"explicação detalhada sobre o conceito de {expanded_terms[0]}"
+            search_queries.append(conceptual_query)
     else:
-        # Se não houver tópico, a própria query do usuário é a busca
         search_queries.append(query)
         
-    logger.info(f"Executando {len(search_queries)} buscas vetoriais para construir o universo de candidatos.")
+    logger.info(f"Executando {len(search_queries)} buscas vetoriais focadas no tópico. Filtro de metadados: {pinecone_filter}")
 
     for semantic_query in search_queries:
         query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
         try:
+            # O filtro de metadados fará o trabalho de restringir a busca à empresa correta.
             results = pinecone_index.query(
                 vector=query_embedding,
                 top_k=TOP_K_INITIAL_RETRIEVAL,
-                filter=pinecone_filter if pinecone_filter else None,
+                filter=pinecone_filter,
                 include_metadata=True
             )
             for match in results.get('matches', []):
@@ -376,28 +374,24 @@ def execute_dynamic_plan(
 
     logger.info(f"Universo inicial construído com {len(candidate_chunks_dict)} chunks únicos.")
     initial_candidates = list(candidate_chunks_dict.values())
-    # --- FIM DA MUDANÇA DE ESTRATÉGIA ---
+    # --- FIM DA CORREÇÃO DE ESTRATÉGIA ---
 
-
-    # --- ETAPA 4: BUSCA HÍBRIDA POR TAGS (Agora sobre o universo expandido) ---
+    # O restante da função continua como na versão anterior, que já estava correta.
+    # ETAPA 4: BUSCA HÍBRIDA POR TAGS
     if topicos:
         all_target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
-        logger.info(f"Executando busca por tags no universo de {len(initial_candidates)} chunks.")
         tag_search_candidates = search_by_tags(initial_candidates, list(all_target_tags))
         for chunk in tag_search_candidates:
             add_candidate(chunk)
-        logger.info(f"Após busca por tags, o total de candidatos únicos é {len(candidate_chunks_dict)}.")
 
     candidate_list = list(candidate_chunks_dict.values())
     if not candidate_list:
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
-    # --- ETAPA 5: LÓGICA DE RECÊNCIA (Agora sobre o universo expandido) ---
+    # ETAPA 5: LÓGICA DE RECÊNCIA
     final_candidate_list = []
-    # (O restante da função, a partir daqui, é o que já havíamos corrigido na etapa anterior)
     if empresas:
-        # ... (código da lógica de recência permanece o mesmo)
-        logger.info(f"Aplicando filtro de recência para as empresas: {empresas}")
+        #... (lógica de recência) ...
         candidates_by_company = defaultdict(list)
         for chunk in candidate_list:
             chunk_company = chunk.get('company_name')
@@ -431,17 +425,17 @@ def execute_dynamic_plan(
 
     logger.info(f"Após filtro de recência, {len(final_candidate_list)} chunks foram selecionados para re-ranqueamento.")
     
-    # --- ETAPA 6: RE-RANKING E CONSTRUÇÃO DO CONTEXTO FINAL ---
+    # ETAPA 6: RE-RANKING E CONSTRUÇÃO DO CONTEXTO FINAL
     if not final_candidate_list:
         return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
     reranked_chunks = rerank_with_cross_encoder(query, final_candidate_list, cross_encoder_model, top_n=TOP_K_FINAL)
-
+    
+    #... (construção do contexto final) ...
     full_context = ""
     retrieved_sources = []
     seen_sources = set()
     for chunk in reranked_chunks:
-        #... (código de construção do contexto final permanece o mesmo)
         company_name = chunk.get('company_name', 'N/A')
         source_url = chunk.get('source_url', 'N/A')
         doc_type = chunk.get('doc_type', 'N/A')
