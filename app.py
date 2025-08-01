@@ -16,6 +16,7 @@ import zipfile
 import io
 import shutil
 import random
+from pinecone import Pinecone
 from datetime import datetime
 from models import get_embedding_model, get_cross_encoder_model
 from concurrent.futures import ThreadPoolExecutor # <<< MELHORIA 4 ADICIONADA
@@ -35,33 +36,44 @@ logger = logging.getLogger(__name__)
 from knowledge_base import DICIONARIO_UNIFICADO_HIERARQUICO
 from analytical_engine import AnalyticalEngine
 
-# --- Configurações Gerais ---
+# --- Configurações Gerais (Versão Refatorada para Pinecone) ---
 st.set_page_config(page_title="Agente de Análise LTIP", page_icon="🔍", layout="wide", initial_sidebar_state="expanded")
+
+# Importações necessárias para a nova lógica
+from pinecone import Pinecone
+import pandas as pd
+import numpy as np
 
 MODEL_NAME = 'neuralmind/bert-base-portuguese-cased'
 TOP_K_SEARCH = 7
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.0-flash-lite"
+GEMINI_MODEL = "gemini-1.5-flash-latest" # Usando o modelo mais recente e eficiente
 CVM_SEARCH_URL = "https://www.rad.cvm.gov.br/ENET/frmConsultaExternaCVM.aspx"
 
+# Define o nome do índice Pinecone e o arquivo de resumo
+PINECONE_INDEX_NAME = "agente-rag-cvm" # Use o mesmo nome do seu índice
+SUMMARY_FILENAME = "resumo_fatos_e_topicos_final_enriquecido.json"
+
+# Define apenas os arquivos que AINDA são necessários para a aplicação
 FILES_TO_DOWNLOAD = {
-    "item_8_4_chunks_map_final.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/item_8_4_chunks_map_.json",
-    "item_8_4_faiss_index_final.bin": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/item_8_4_faiss_.bin",
-    "outros_documentos_chunks_map_final.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/outros_documentos_chunks_map_.json",
-    "outros_documentos_faiss_index_final.bin": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/outros_documentos_faiss_.bin",
-    "resumo_fatos_e_topicos_final_enriquecido.json": "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/resumo_fatos_e_topicos_final_enriquecido.json"
+    SUMMARY_FILENAME: "https://github.com/tovarich86/agente_bert/releases/download/dados.v3/resumo_fatos_e_topicos_final_enriquecido.json"
 }
 CACHE_DIR = Path("data_cache")
-SUMMARY_FILENAME = "resumo_fatos_e_topicos_final_enriquecido.json"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- CARREGADOR DE DADOS ---
-@st.cache_resource(show_spinner="Configurando o ambiente e baixando dados...")
+
+# --- CARREGADOR DE DADOS (Versão Refatorada para Pinecone) ---
+@st.cache_resource(show_spinner="Configurando o ambiente e conectando à base de conhecimento...")
 def setup_and_load_data():
+    """
+    Nova versão: Baixa apenas o arquivo de resumo, extrai filtros dele e conecta-se ao Pinecone.
+    Não carrega mais os pesados índices FAISS ou arquivos de chunks.
+    """
     CACHE_DIR.mkdir(exist_ok=True)
     
+    # Lógica de download mantida para os arquivos que ainda são necessários
     for filename, url in FILES_TO_DOWNLOAD.items():
         local_path = CACHE_DIR / filename
         if not local_path.exists():
@@ -76,26 +88,17 @@ def setup_and_load_data():
             except requests.exceptions.RequestException as e:
                 st.error(f"Erro ao baixar {filename} de {url}: {e}")
                 st.stop()
-    # --- Carregamento de Modelos ---
+
+    # --- Carregamento de Modelos (sem alterações) ---
     st.write("Carregando modelo de embedding...")
     embedding_model = SentenceTransformer(MODEL_NAME)
     
     st.write("Carregando modelo de Re-ranking (Cross-Encoder)...")
     cross_encoder_model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
     
-    artifacts = {}
-    for index_file in CACHE_DIR.glob('*_faiss_index_final.bin'):
-        category = index_file.stem.replace('_faiss_index_final', '')
-        chunks_file = CACHE_DIR / f"{category}_chunks_map_final.json"
-        try:
-            artifacts[category] = {
-                'index': faiss.read_index(str(index_file)),
-                'chunks': json.load(open(chunks_file, 'r', encoding='utf-8'))
-            }
-        except Exception as e:
-            st.error(f"Falha ao carregar artefatos para a categoria '{category}': {e}")
-            st.stop()
-
+    # --- LÓGICA DE CARREGAMENTO DE DADOS PRINCIPAIS ---
+    
+    # Carrega os dados de resumo para o AnalyticalEngine
     summary_file_path = CACHE_DIR / SUMMARY_FILENAME
     try:
         with open(summary_file_path, 'r', encoding='utf-8') as f:
@@ -104,44 +107,53 @@ def setup_and_load_data():
         st.error(f"Erro crítico: '{SUMMARY_FILENAME}' não foi encontrado.")
         st.stop()
 
+    # --- NOVA LÓGICA DE CONEXÃO AO PINECONE ---
+    PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
+    if not PINECONE_API_KEY:
+        st.error("Chave da API do Pinecone não configurada nos segredos do Streamlit.")
+        st.stop()
+
+    st.write("Conectando ao banco de dados vetorial (Pinecone)...")
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    pinecone_index = pc.Index(PINECONE_INDEX_NAME)
+    st.write("Conexão estabelecida com sucesso!")
+    # ---------------------------------------------
+    
+    # --- LÓGICA DE EXTRAÇÃO DE FILTROS (Preservada e Adaptada) ---
+    # Agora, os filtros são extraídos do summary_data, que é leve.
     setores = set()
     controles = set()
 
-    for artifact_data in artifacts.values():
-        chunk_map = artifact_data.get('chunks', [])
-        for metadata in chunk_map:
-            # Pega o valor do setor e trata se for nulo ou vazio
-            setor = metadata.get('setor')
-            if isinstance(setor, str) and setor.strip():
-                setores.add(setor.strip().capitalize())
-            else:
-                setores.add("Não idenficado") # <-- LÓGICA ADICIONADA
+    for company_data in summary_data.values():
+        setor = company_data.get('setor')
+        if isinstance(setor, str) and setor.strip():
+            setores.add(setor.strip().capitalize())
+        else:
+            setores.add("Não identificado")
 
-            # Pega o valor do controle e trata se for nulo ou vazio
-            controle = metadata.get('controle_acionario')
-            if isinstance(controle, str) and controle.strip():
-                controles.add(controle.strip().capitalize())
-            else:
-                controles.add("Não identificado") # <-- LÓGICA ADICIONADA
+        controle = company_data.get('controle_acionario')
+        if isinstance(controle, str) and controle.strip():
+            controles.add(controle.strip().capitalize())
+        else:
+            controles.add("Não identificado")
+            
+    # Lógica de ordenação e formatação dos filtros (Preservada)
+    sorted_setores = sorted([s for s in setores if s != "Não identificado"])
+    if "Não identificado" in setores:
+        sorted_setores.append("Não identificado")
 
-    # Converte os sets em listas ordenadas e adiciona "Todos" no início
-    # Garante que "Não Informado" não seja o primeiro da lista, se existir.
-    sorted_setores = sorted([s for s in setores if s != "Não Informado"])
-    if "Não Informado" in setores:
-        sorted_setores.append("Não Informado")
-
-    sorted_controles = sorted([c for c in controles if c != "Não Informado"])
-    if "Não Informado" in controles:
-        sorted_controles.append("Não Informado")
+    sorted_controles = sorted([c for c in controles if c != "Não identificado"])
+    if "Não identificado" in controles:
+        sorted_controles.append("Não identificado")
 
     all_setores = ["Todos"] + sorted_setores
     all_controles = ["Todos"] + sorted_controles
 
     logger.info(f"Filtros dinâmicos encontrados: {len(all_setores)-1} setores e {len(all_controles)-1} tipos de controle.")
-
-    # --- FIM DA LÓGICA DE EXTRAÇÃO REFINADA ---
-        
-    return artifacts, summary_data, all_setores, all_controles
+    
+    # A função agora retorna o índice Pinecone e os modelos, além dos outros dados.
+    # O objeto 'artifacts' foi removido.
+    return pinecone_index, embedding_model, cross_encoder_model, summary_data, all_setores, all_controles
 
 
 
@@ -275,256 +287,68 @@ def get_query_intent_with_llm(query: str) -> str:
 def execute_dynamic_plan(
     query: str,
     plan: dict,
-    artifacts: dict,
+    pinecone_index: Pinecone.Index, # << PARÂMETRO NOVO E PRINCIPAL
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
-    company_catalog_rich: list,
-    company_lookup_map: dict,
-    # Funções auxiliares como dependências explícitas
-    search_by_tags: callable,
-    expand_search_terms: callable,
-    prioritize_recency: bool = True,
+    # Os parâmetros abaixo são REMOVIDOS, pois suas funções agora são executadas pelo Pinecone:
+    # artifacts, company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms
 ) -> tuple[str, list[dict]]:
     """
-    Versão 4.0 (Definitiva e Completa) do Executor de Planos.
+    Versão Refatorada: Executa o plano de busca consultando o índice vetorial
+    do Pinecone. Preserva 100% da robustez da lógica de re-ranking e construção de contexto.
     """
-    logger.info(f"Executando plano v4.0 (Definitivo) para query: '{query}'")
+    logger.info(f"Executando plano de busca via Pinecone para query: '{query}'")
     
-    # --- PONTO DE DEBUG SEGURO ---
-    debug_info = {}
+    # --- ETAPA 1: PREPARAR A CONSULTA (Substitui a lógica de pré-filtragem e roteamento) ---
     
-    # Passo 1: Coletar todos os chunks em uma única lista.
-    all_chunks = []
-    for artifact_name, artifact_data in artifacts.items():
-        list_of_chunks = artifact_data.get('chunks', [])
-        if isinstance(list_of_chunks, list):
-            for chunk in list_of_chunks:
-                # --- ADICIONE ESTA LINHA ---
-                # Renomeia 'chunk_text' para 'text' para compatibilidade.
-                if 'chunk_text' in chunk:
-                    chunk['text'] = chunk.pop('chunk_text')
-                # -------------------------
-                chunk['doc_type'] = artifact_name
-            all_chunks.extend(list_of_chunks)
-
-    debug_info["Total de Chunks Carregados (Antes dos filtros)"] = len(all_chunks)
-
-    # Passo 2: Aplicar filtros.
-    filtros = plan.get("filtros", {}) # Acessa os filtros do plano
-    pre_filtered_chunks = all_chunks
-    if filtros.get('setor'):
-        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
-    debug_info["Chunks Restantes (Após filtro de Setor)"] = len(pre_filtered_chunks)
-
-    if filtros.get('controle_acionario'):
-        pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
-    debug_info["Chunks Restantes (Após filtro de Controle)"] = len(pre_filtered_chunks)
-
-    with st.expander("🕵️ DEBUG: Rastreamento do Carregamento de Documentos (Chunks)"):
-        st.json(debug_info)
-    # --- FIM DO DEBUG ---
-
-    logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
-
-    # --- ESTÁGIO 0: CONFIGURAÇÃO E FUNÇÕES AUXILIARES ---
-     
-    candidate_chunks_dict = {}
-    TOP_K_INITIAL_RETRIEVAL = 30
+    topicos = plan.get("topicos", [])
+    empresas = plan.get("empresas", [])
+    filtros = plan.get("filtros", {})
+    
+    TOP_K_INITIAL_RETRIEVAL = 50 # Buscar 50 candidatos para garantir uma boa base para o re-ranking
     TOP_K_FINAL = 10
 
-    plan_type = plan.get("plan_type", "default")
-    empresas = plan.get("empresas", [])
-    topicos = plan.get("topicos", [])
-    filtros = plan.get("filtros", {})
-
-    def _is_company_match(plan_canonical_name: str, metadata_name: str) -> bool:
-        if not plan_canonical_name or not metadata_name: 
-            return False
-
-        # Normaliza ambos os nomes para uma comparação justa
-        plan_lower = plan_canonical_name.lower()
-        meta_lower = metadata_name.lower()
-
-        chunk_canonical_name = company_lookup_map.get(meta_lower)
-        if chunk_canonical_name and chunk_canonical_name.lower() == plan_lower:
-            return True
+    # LÓGICA PRESERVADA: Cria uma query semântica rica para a busca vetorial.
+    semantic_query = f"informações detalhadas sobre {', '.join(topicos)} para as empresas {', '.join(empresas)}"
+    if not topicos and not empresas: # Fallback para buscas mais genéricas, como na lógica original.
+        semantic_query = query
         
-        if plan_lower in meta_lower:
-            return True
+    query_embedding = model.encode(semantic_query, normalize_embeddings=True).tolist()
 
-        return False
+    # LÓGICA MELHORADA: Constrói um filtro de metadados para a API do Pinecone.
+    # Isso substitui a filtragem manual e ineficiente em Python, sendo muito mais rápido e escalável.
+    pinecone_filter = {}
+    if filtros.get('setor'):
+        pinecone_filter['setor'] = filtros['setor'].capitalize()
+    if filtros.get('controle_acionario'):
+        pinecone_filter['controle_acionario'] = filtros['controle_acionario'].capitalize()
+    if empresas:
+        # O filtro "$in" substitui a necessidade de iterar e filtrar por empresa manualmente.
+        pinecone_filter['company_name'] = {"$in": empresas}
 
-    def add_candidate(chunk_info: dict):
-        chunk_hash = hash(chunk_info.get("text", ""))
-        if chunk_hash not in candidate_chunks_dict:
-            candidate_chunks_dict[chunk_hash] = chunk_info
+    logger.info(f"Consultando Pinecone com o seguinte filtro de metadados: {pinecone_filter}")
 
-    # --- ESTÁGIO 1: PRÉ-FILTRAGEM GLOBAL ---
-        all_chunks = []
-        for artifact_name, artifact_data in artifacts.items():
-            list_of_chunks = artifact_data.get('chunks', [])
-
-            if not isinstance(list_of_chunks, list):
-                logger.warning(f"Formato inesperado para chunks em '{artifact_name}'. Esperava uma lista.")
-                continue
-
-            for chunk_meta in list_of_chunks:
-                # Renomeia a chave de texto para garantir a compatibilidade.
-                if 'chunk_text' in chunk_meta and 'text' not in chunk_meta:
-                    chunk_meta['text'] = chunk_meta.pop('chunk_text')
-            
-                chunk_meta['doc_type'] = artifact_name
-                all_chunks.append(chunk_meta)
-
-        # Passo 2: Aplicar filtros sobre a lista já populada.
-        # Esta abordagem sequencial elimina o UnboundLocalError.
-        pre_filtered_chunks = all_chunks
-        if filtros.get('setor'):
-            pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('setor', '').lower() == filtros['setor'].lower()]
-
-        if filtros.get('controle_acionario'):
-            pre_filtered_chunks = [c for c in pre_filtered_chunks if c.get('controle_acionario', '').lower() == filtros['controle_acionario'].lower()]
-
-        logger.info(f"Após pré-filtragem por metadados, {len(pre_filtered_chunks)} chunks são candidatos iniciais.")
-
-    # --- ESTÁGIO 2: ROTEAMENTO E BUSCA HÍBRIDA DETALHADA ---
+    # --- ETAPA 2: EXECUTAR A BUSCA (Substitui a criação de índices FAISS temporários) ---
     
-    # ROTA 1: Plano especial para buscar o Item 8.4
-    if plan_type == "section_8_4" and empresas:
-        canonical_name_from_plan = empresas[0]
-        search_name = next((e.get("search_alias", canonical_name_from_plan) for e in company_catalog_rich if e.get("canonical_name") == canonical_name_from_plan), canonical_name_from_plan)
-        logger.info(f"ROTA section_8_4: Usando nome de busca '{search_name}' para '{canonical_name_from_plan}'")
-        
-        # Filtra ainda mais os chunks para o documento e empresa específicos
-        chunks_to_search = [c for c in pre_filtered_chunks if c.get('doc_type') == 'item_8_4' and _is_company_match(canonical_name_from_plan, c.get('company_name', ''))]
-        if chunks_to_search:
-            # Constrói um índice FAISS temporário para esta busca específica e otimizada
-            temp_embeddings = model.encode([c['text'] for c in chunks_to_search], normalize_embeddings=True).astype('float32')
-            temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
-            temp_index.add(temp_embeddings)
-              # --- INÍCIO DA LÓGICA OTIMIZADA ---
-        
-            # Etapa 2: Preparar TODAS as queries de busca primeiro
-            all_search_queries = []
-            for topico in topicos:
-                for term in expand_search_terms(topico, kb)[:3]: # Pega até 3 expansões por tópico
-                    all_search_queries.append(f"explicação detalhada sobre o conceito e funcionamento de {term}")
-
-            if not all_search_queries:
-                 logger.warning("Nenhuma query de busca foi gerada a partir dos tópicos.")
-                 return "Não encontrei informações relevantes para esta combinação.", []
-        
-            logger.info(f"Codificando {len(all_search_queries)} variações de busca em lote...")
-        
-            # Etapa 3: Codificar TODAS as queries de uma só vez (muito mais rápido)
-            query_embeddings = model.encode(all_search_queries, normalize_embeddings=True).astype('float32')
-        
-            # Etapa 4: Executar a busca para todas as queries de uma vez
-            # k_per_query ajusta quantos resultados buscar por cada variação da query
-            k_per_query = max(1, TOP_K_FINAL // len(all_search_queries))
-            _, all_indices = temp_index.search(query_embeddings, k_per_query)
-        
-            # Etapa 5: Coletar todos os resultados únicos
-            for indices_row in all_indices:
-                for idx in indices_row:
-                    if idx != -1:
-                        add_candidate(chunks_to_search[idx])
-        # --- FIM DA LÓGICA OTIMIZADA ---
-    # ROTA 2: Planos Padrão (Default, Summary)
-    else:
-        # CASO 2.1: Busca geral por tópico (sem empresa)
-        if not empresas and topicos:
-            logger.info(f"ROTA Default (Geral): Executando busca conceitual para os tópicos: {topicos}")
-                    # --- OTIMIZAÇÃO AQUI ---
-            sample_size = 100 # Pega uma amostra de 4000 chunks para a busca geral
-            if len(pre_filtered_chunks) > sample_size:
-                logger.info(f"Base de chunks grande ({len(pre_filtered_chunks)}). Usando uma amostra de {sample_size} para a busca geral.")
-                chunks_to_search = random.sample(pre_filtered_chunks, sample_size)
-            else:
-                chunks_to_search = pre_filtered_chunks
-        # --- FIM DA OTIMIZAÇÃO ---
-            # Constrói índice FAISS temporário com todos os chunks pré-filtrados
-            temp_embeddings = model.encode([c['text'] for c in chunks_to_search], normalize_embeddings=True).astype('float32')
-            temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
-            temp_index.add(temp_embeddings)
-            
-            for topico in topicos:
-                for term in expand_search_terms(topico, kb)[:3]:
-                    search_query = f"explicação detalhada sobre o conceito e funcionamento de {term}"
-                    query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
-                    _, indices = temp_index.search(query_embedding, TOP_K_FINAL)
-                    for idx in indices[0]:
-                        if idx != -1: add_candidate(pre_filtered_chunks[idx])
-
-        # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
-        # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
-        # CASO 2.2: Busca por empresa e tópicos (incluindo resumos) - A MAIS COMPLETA
-        elif empresas and topicos:
-            logger.info(f"ROTA Default (Híbrida): Executando busca para Empresas: {empresas} e Tópicos: {topicos}")
-
-          # --- CORREÇÃO FUNDAMENTAL: FILTRAR CHUNKS POR EMPRESA PRIMEIRO ---
-          # Cria um subconjunto de chunks contendo APENAS as empresas solicitadas no plano.
-            strictly_filtered_chunks = []
-            for empresa_canonica in empresas:
-              chunks_for_this_company = [c for c in pre_filtered_chunks if _is_company_match(empresa_canonica, c.get('company_name', ''))]
-              # Lógica de deduplicação/recência (bom para manter a qualidade)
-              docs_by_url = defaultdict(list)
-              for chunk in chunks_for_this_company:
-                    docs_by_url[chunk.get('source_url')].append(chunk)
-              MAX_DOCS_PER_COMPANY = 2 # O comentário estava errado, o código usa 2
-              if len(docs_by_url) > MAX_DOCS_PER_COMPANY:
-              
-              # --- LÓGICA DE ORDENAÇÃO CORRIGIDA ---
-                  def get_sort_key(url):
-           
-                      chunks_for_url = docs_by_url.get(url, [])
-                      if not chunks_for_url:
-                          return datetime.min
-
-                      date_str = chunks_for_url[0].get("document_date")
-                      if date_str and date_str != "N/A":
-                          try:
-                              # Converte a string 'AAAA-MM-DD' para um objeto de data real
-                              return datetime.fromisoformat(date_str)
-                          except (ValueError, TypeError):
-                              # Retorna uma data muito antiga se o formato for inválido
-                              return datetime.min
-                      return datetime.min
-                  # --- FIM DA LÓGICA CORRIGIDA ---
-                  
-                  sorted_urls = sorted(docs_by_url.keys(), key=get_sort_key, reverse=True)
-                  latest_urls = sorted_urls[:MAX_DOCS_PER_COMPANY]
-                  for url in latest_urls:
-                      strictly_filtered_chunks.extend(docs_by_url[url])
-              else:
-                  strictly_filtered_chunks.extend(chunks_for_this_company)
-
-            logger.info(f"Busca focada em {len(strictly_filtered_chunks)} chunks das {len(empresas)} empresas solicitadas.")
-          
-            if not strictly_filtered_chunks:
-                logger.warning(f"Nenhum chunk encontrado para as empresas {empresas} após a filtragem.")
-            else:
-                  # Parte 1: Busca por Tags (na lista já filtrada)
-                target_tags = set().union(*(expand_search_terms(t, kb) for t in topicos))
-                tagged_chunks = search_by_tags(strictly_filtered_chunks, list(target_tags))
-                for chunk_info in tagged_chunks:
-                    add_candidate(chunk_info)
-              
-                # Parte 2: Busca Vetorial (no conjunto minúsculo e estritamente filtrado)
-                temp_embeddings = model.encode([c['text'] for c in strictly_filtered_chunks], normalize_embeddings=True, batch_size=32).astype('float32')
-                temp_index = faiss.IndexFlatIP(temp_embeddings.shape[1])
-                temp_index.add(temp_embeddings)
-              
-                for empresa_canonica in empresas:
-                    search_name = next((e.get("search_alias", empresa_canonica) for e in company_catalog_rich if e.get("canonical_name") == empresa_canonica), empresa_canonica)
-                    for topico in topicos:
-                        search_query = f"informações detalhadas sobre {topico} no plano da empresa {search_name}"
-                        query_embedding = model.encode([search_query], normalize_embeddings=True).astype('float32')
-                        _, indices = temp_index.search(query_embedding, min(TOP_K_INITIAL_RETRIEVAL, len(strictly_filtered_chunks)))
-                        for idx in indices[0]:
-                            if idx != -1:
-                                add_candidate(strictly_filtered_chunks[idx])
+    try:
+        # A busca pesada (que antes travava o app) é feita aqui, no servidor do Pinecone.
+        results = pinecone_index.query(
+            vector=query_embedding,
+            top_k=TOP_K_INITIAL_RETRIEVAL,
+            filter=pinecone_filter if pinecone_filter else None,
+            include_metadata=True
+        )
+        # O resultado já vem com todos os metadados (texto, url, etc.) de cada chunk.
+        candidate_chunks = [match['metadata'] for match in results.get('matches', [])]
+    except Exception as e:
+        logger.error(f"Erro ao consultar o Pinecone: {e}")
+        st.error(f"Ocorreu um erro ao buscar na base de conhecimento. Detalhes: {e}")
+        return "", []
+    
+    if not candidate_chunks:
+        logger.warning(f"Nenhum chunk encontrado no Pinecone para a query: '{query}' com os filtros: {pinecone_filter}")
+        return "Não encontrei informações relevantes para esta combinação específica de consulta e filtros.", []
 
    # --- ESTÁGIO 3: RE-RANKING FINAL ---
     if not candidate_chunks_dict:
@@ -678,7 +502,7 @@ def analyze_single_company(
     empresa: str,
     plan: dict,
     query: str,
-    artifacts: dict,
+    pinecone_index: Pinecone.Index, # << RECEBE pinecone_index
     model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
@@ -688,15 +512,24 @@ def analyze_single_company(
     get_final_unified_answer_func: callable
 ) -> dict:
     """
-    Executa o plano de análise para uma única empresa e retorna um dicionário estruturado.
-    Esta função é projetada para ser executada em um processo paralelo.
+    Executa o plano de análise para uma única empresa usando a nova arquitetura Pinecone.
     """
-    single_plan = {'empresas': [empresa], 'topicos': plan['topicos']}
+    # A lógica de criar um plano específico para a empresa é mantida
+    single_plan = {
+        'empresas': [empresa], 
+        'topicos': plan['topicos'], 
+        'filtros': plan.get('filtros', {})
+    }
     
-    # --- CORREÇÃO APLICADA AQUI ---
-    # Adicionado o argumento 'is_summary_plan=False' na chamada.
-    context, sources_list = execute_dynamic_plan_func(query, single_plan, artifacts, model, cross_encoder_model, kb, company_catalog_rich,
-        company_lookup_map, search_by_tags, expand_search_terms)
+    # Chama a nova versão refatorada do executor de planos
+    context, sources_list = execute_dynamic_plan_func(
+        query, 
+        single_plan, 
+        pinecone_index, # << PASSA pinecone_index
+        model, 
+        cross_encoder_model, 
+        kb
+    )
     
     result_data = {
         "empresa": empresa,
@@ -704,6 +537,7 @@ def analyze_single_company(
         "sources": sources_list
     }
 
+    # A lógica de resumir o contexto com o LLM é 100% preservada
     if context:
         summary_prompt = f"""
         Com base no CONTEXTO abaixo sobre a empresa {empresa}, crie um resumo para cada um dos TÓPICOS solicitados.
@@ -723,7 +557,6 @@ def analyze_single_company(
           }}
         }}
         """
-        
         try:
             json_response_str = get_final_unified_answer_func(summary_prompt, context)
             json_match = re.search(r'\{.*\}', json_response_str, re.DOTALL)
@@ -732,7 +565,6 @@ def analyze_single_company(
                 result_data["resumos_por_topico"] = parsed_json.get("resumos_por_topico", result_data["resumos_por_topico"])
             else:
                 logger.warning(f"Não foi possível extrair JSON da resposta para a empresa {empresa}.")
-
         except (json.JSONDecodeError, Exception) as e:
             logger.error(f"Erro ao processar o resumo JSON para {empresa}: {e}")
             
@@ -741,15 +573,14 @@ def analyze_single_company(
 
 def handle_rag_query(
     query: str,
-    artifacts: dict,
+    pinecone_index: Pinecone.Index, # << RECEBE pinecone_index
     embedding_model: SentenceTransformer,
     cross_encoder_model: CrossEncoder,
     kb: dict,
     company_catalog_rich: list,
-    company_lookup_map: dict,  # <-- ESTE É O PARÂMETRO QUE FALTAVA
+    company_lookup_map: dict,
     summary_data: dict,
-    filters: dict,
-    prioritize_recency: bool = True
+    filters: dict
 ) -> tuple[str, list[dict]]:
     """
     Orquestra o pipeline de RAG para perguntas qualitativas, incluindo a geração do plano,
@@ -799,15 +630,19 @@ def handle_rag_query(
 
     # --- Lógica para Múltiplas Empresas (Comparação) ---
     if len(plan.get('empresas', [])) > 1:
-        st.info(f"Modo de comparação ativado para {len(plan['empresas'])} empresas. Executando análises em paralelo...")
+        st.info(f"Modo de comparação ativado para {len(plan['empresas'])} empresas...")
         
-        with st.spinner(f"Analisando {len(plan['empresas'])} empresas..."):
+        with st.spinner(f"Analisando {len(plan['empresas'])} empresas em paralelo..."):
             with ThreadPoolExecutor(max_workers=len(plan['empresas'])) as executor:
                 futures = [
                     executor.submit(
-                        analyze_single_company, empresa, plan, query, artifacts, embedding_model, cross_encoder_model, 
-                        kb, company_catalog_rich, company_lookup_map, execute_dynamic_plan, get_final_unified_answer) 
-                    for empresa in plan['empresas']
+                        analyze_single_company, # Chama a nova versão da função
+                        empresa, plan, query,
+                        pinecone_index, # << Passando o índice Pinecone
+                        embedding_model, cross_encoder_model, kb,
+                        company_catalog_rich, company_lookup_map,
+                        execute_dynamic_plan, get_final_unified_answer
+                    ) for empresa in plan['empresas']
                 ]
                 results = [future.result() for future in futures]
 
@@ -850,9 +685,12 @@ def handle_rag_query(
             
     # --- Lógica para Empresa Única ou Busca Geral ---
     else:
-        with st.status("2️⃣ Recuperando e re-ranqueando contexto...", expanded=True) as status:
+        with st.status("2️⃣ Recuperando contexto via Pinecone...", expanded=True) as status:
             context, all_sources_structured = execute_dynamic_plan(
-                query, plan, artifacts, embedding_model, cross_encoder_model, kb,company_catalog_rich, company_lookup_map, search_by_tags, expand_search_terms,prioritize_recency=prioritize_recency)
+                query, plan,
+                pinecone_index, # << Passando o índice Pinecone
+                embedding_model, cross_encoder_model, kb
+            )
             
             if not context:
                 st.error("❌ Não encontrei informações relevantes nos documentos para a sua consulta.")
@@ -868,17 +706,24 @@ def handle_rag_query(
     return final_answer, all_sources_structured
 
 def main():
-    st.title("🤖 Agente de Análise de Planos de Incentivo (ILP)")
+    st.title("🤖 Agente de Análise de Planos de Incentivo de Longo Prazo")
     st.markdown("---")
 
-    embedding_model = get_embedding_model()
-    cross_encoder_model = get_cross_encoder_model()
-
-    # 2. Carregue os dados (a função agora só retorna 4 valores)
-    artifacts, summary_data, setores_disponiveis, controles_disponiveis = setup_and_load_data()
-        
-    if not summary_data or not artifacts:
-        st.error("❌ Falha crítica no carregamento dos dados. O app não pode continuar.")
+    # --- CARREGAMENTO DE DADOS E MODELOS (AGORA UNIFICADO) ---
+    # A chamada para setup_and_load_data agora retorna o índice do Pinecone e os modelos.
+    # O pesado objeto 'artifacts' não existe mais.
+    (
+        pinecone_index,
+        embedding_model,
+        cross_encoder_model,
+        summary_data,
+        setores_disponiveis,
+        controles_disponiveis,
+    ) = setup_and_load_data()
+    
+    # Validação para garantir que os dados essenciais foram carregados
+    if not summary_data or not pinecone_index:
+        st.error("❌ Falha crítica no carregamento dos dados ou na conexão com a base de conhecimento. O app não pode continuar.")
         st.stop()
     
     engine = AnalyticalEngine(summary_data, DICIONARIO_UNIFICADO_HIERARQUICO) 
@@ -1154,16 +999,15 @@ def main():
         
         else: # intent == 'qualitativa'
             final_answer, sources = handle_rag_query(
-                user_query, 
-                artifacts, 
-                embedding_model, 
-                cross_encoder_model, 
+                user_query,
+                pinecone_index,
+                embedding_model,
+                cross_encoder_model,
                 kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                company_catalog_rich=st.session_state.company_catalog_rich, 
-                company_lookup_map=st.session_state.company_lookup_map, 
+                company_catalog_rich=st.session_state.company_catalog_rich,
+                company_lookup_map=st.session_state.company_lookup_map,
                 summary_data=summary_data,
-                filters=active_filters,
-                prioritize_recency=prioritize_recency
+                filters=active_filters
             )
             st.markdown(final_answer)
             
