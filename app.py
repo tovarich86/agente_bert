@@ -893,33 +893,38 @@ if st.button("🔍 Analisar", type="primary", use_container_width=True):
         topics_to_search = [t for t in topics_to_search if t.lower() not in listing_keywords and t.lower() not in thematic_keywords]
 
         # Rota 1: Análise Temática
-        if any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
+        # Rota 1: Análise Temática (Usa 'thematic_keywords')
+        if any(keyword in query_lower for keyword in thematic_keywords) and topics_to_search:
+            with st.spinner(f"Iniciando análise temática... Este processo é detalhado e pode levar alguns minutos."):
+                st.write(f"**Tópico identificado para análise temática:** `{topics_to_search[0]}`")
+                final_report = analyze_topic_thematically(
+                    topic=topics_to_search[0],
+                    query=user_query,
+                    summary_data=summary_data,
+                    pinecone_index=pinecone_index,
+                    embedding_model=embedding_model,
+                    cross_encoder_model=cross_encoder_model,
+                    kb=DICIONARIO_UNIFICADO_HIERARQUICO,
+                    execute_dynamic_plan_func=execute_dynamic_plan,
+                    get_final_unified_answer_func=get_final_unified_answer,
+                    filters=active_filters
+                )
+                st.markdown(final_report)
+
+            # Rota 2: Listagem de Empresas por Tópico (Usa 'listing_keywords')
+        elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
             with st.spinner(f"Buscando empresas nos dados de resumo..."):
                 st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
                 all_found_companies = set()
                 for topic_item in topics_to_search:
                     companies = find_companies_by_topic(
                         topic=topic_item,
-                        summary_data=summary_data, 
+                        summary_data=summary_data,
                         kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                        filters=active_filters                            
+                        filters=active_filters
                     )
                     all_found_companies.update(companies)
-                # (Se precisar usar o resultado, coloque o código aqui.)
-
-        # Rota 2: Listagem de Empresas
-        elif any(keyword in query_lower for keyword in listing_keywords) and topics_to_search:
-            with st.spinner(f"Usando ferramentas para encontrar empresas..."):
-                st.write(f"**Tópicos identificados para busca:** `{', '.join(topics_to_search)}`")
-                all_found_companies = set()
-                for topic_item in topics_to_search:
-                    companies = find_companies_by_topic(
-                        topic=topic_item,  
-                        summary_data=summary_data, 
-                        kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-                        filters=active_filters                            
-                    )
-                    all_found_companies.update(companies)
+                    
                 if all_found_companies:
                     sorted_companies = sorted(list(all_found_companies))
                     final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os tópicos relacionados:\n"
@@ -928,7 +933,7 @@ if st.button("🔍 Analisar", type="primary", use_container_width=True):
                     final_answer = "Nenhuma empresa encontrada nos documentos para os tópicos identificados."
                 st.markdown(final_answer)
 
-        # Rota 2.5: Listagem de Empresas APENAS POR FILTRO
+            # Rota 2.5: Listagem de Empresas APENAS POR FILTRO
         elif any(keyword in query_lower for keyword in listing_keywords) and active_filters and not topics_to_search:
             with st.spinner("Listando empresas com base nos filtros selecionados..."):
                 st.write("Nenhum tópico técnico identificado. Listando todas as empresas que correspondem aos filtros.")
@@ -936,12 +941,13 @@ if st.button("🔍 Analisar", type="primary", use_container_width=True):
                 for company_name, company_data in summary_data.items():
                     setor_metadata = company_data.get('setor', '')
                     setor_match = (not active_filters.get('setor') or 
-                                   (isinstance(setor_metadata, str) and setor_metadata.lower() == active_filters['setor']))
+                                    (isinstance(setor_metadata, str) and setor_metadata.lower() == active_filters['setor']))
                     controle_metadata = company_data.get('controle_acionario', '')
                     controle_match = (not active_filters.get('controle_acionario') or 
-                                      (isinstance(controle_metadata, str) and controle_metadata.lower() == active_filters['controle_acionario']))
+                                        (isinstance(controle_metadata, str) and controle_metadata.lower() == active_filters['controle_acionario']))
                     if setor_match and controle_match:
                         companies_from_filter.add(company_name)
+                    
                 if companies_from_filter:
                     sorted_companies = sorted(list(companies_from_filter))
                     final_answer = f"#### Foram encontradas {len(sorted_companies)} empresas para os filtros selecionados:\n"
@@ -950,7 +956,7 @@ if st.button("🔍 Analisar", type="primary", use_container_width=True):
                     final_answer = "Nenhuma empresa foi encontrada para a combinação de filtros selecionada."
                 st.markdown(final_answer)
 
-        # Rota 3: Fallback para o AnalyticalEngine
+            # Rota 3: Fallback para o AnalyticalEngine
         else:
             st.info("Intenção quantitativa detectada. Usando o motor de análise rápida...")
             with st.spinner("Executando análise quantitativa rápida..."):
@@ -966,43 +972,29 @@ if st.button("🔍 Analisar", type="primary", use_container_width=True):
                                 st.dataframe(df_content, use_container_width=True, hide_index=True)
                 else: 
                     st.info("Nenhuma análise tabular foi gerada para a sua pergunta ou dados insuficientes.")
-
-    else: # intent == 'qualitativa'
-        final_answer, sources = handle_rag_query(
-            user_query,
-            pinecone_index,
-            embedding_model,
-            cross_encoder_model,
-            kb=DICIONARIO_UNIFICADO_HIERARQUICO,
-            company_catalog_rich=st.session_state.company_catalog_rich,
-            company_lookup_map=st.session_state.company_lookup_map,
-            summary_data=summary_data,
-            filters=active_filters
-        )
-        st.markdown(final_answer)
-        if sources:
-            with st.expander(f"📚 Documentos consultados ({len(sources)})", expanded=True):
-                st.caption("Nota: Links diretos para a CVM podem falhar. Use a busca no portal com o protocolo como plano B.")
-                for src in sorted(sources, key=lambda x: x.get('company_name', '')):
-                    company_name = src.get('company_name', 'N/A')
-                    doc_date = src.get('document_date', 'N/A') 
-                    doc_type_raw = src.get('doc_type', '')
-                    url = src.get('source_url', '')
-                    if doc_type_raw == 'outros_documentos':
-                        display_doc_type = 'Plano de Remuneração'
-                    else:
-                        display_doc_type = doc_type_raw.replace('_', ' ')
-                    display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)"
-                    if "frmExibirArquivoIPEExterno" in url:
-                        protocolo_match = re.search(r'NumeroProtocoloEntrega=(\d+)', url)
-                        protocolo = protocolo_match.group(1) if protocolo_match else "N/A"
-                        st.markdown(f"**{display_text}** (Protocolo: **{protocolo}**)")
-                        st.markdown(f"↳ [Link Direto para Plano de ILP]({url}) ", unsafe_allow_html=True)
-                    elif "frmExibirArquivoFRE" in url:
-                        st.markdown(f"**{display_text}**")
-                        st.markdown(f"↳ [Link Direto para Formulário de Referência]({url})", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"**{display_text}**: [Link]({url})")
+    if sources:
+        with st.expander(f"📚 Documentos consultados ({len(sources)})", expanded=True):
+            st.caption("Nota: Links diretos para a CVM podem falhar. Use a busca no portal com o protocolo como plano B.")
+            for src in sorted(sources, key=lambda x: x.get('company_name', '')):
+                company_name = src.get('company_name', 'N/A')
+                doc_date = src.get('document_date', 'N/A') 
+                doc_type_raw = src.get('doc_type', '')
+                url = src.get('source_url', '')
+                if doc_type_raw == 'outros_documentos':
+                    display_doc_type = 'Plano de Remuneração'
+                else:
+                    display_doc_type = doc_type_raw.replace('_', ' ')
+                display_text = f"{company_name} - {display_doc_type} - (Data: **{doc_date}**)"
+                if "frmExibirArquivoIPEExterno" in url:
+                    protocolo_match = re.search(r'NumeroProtocoloEntrega=(\d+)', url)
+                    protocolo = protocolo_match.group(1) if protocolo_match else "N/A"
+                    st.markdown(f"**{display_text}** (Protocolo: **{protocolo}**)")
+                    st.markdown(f"↳ [Link Direto para Plano de ILP]({url}) ", unsafe_allow_html=True)
+                elif "frmExibirArquivoFRE" in url:
+                    st.markdown(f"**{display_text}**")
+                    st.markdown(f"↳ [Link Direto para Formulário de Referência]({url})", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"**{display_text}**: [Link]({url})")
 
 
 if __name__ == "__main__":
